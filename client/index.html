@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Assistant — Agentic RAG Knowledge Assistant</title>
+    <meta name="description" content="Ask your documents anything. Every answer traces back to its source." />
+    <script>
+      // Runs before React hydrates, so there's no flash of the wrong theme
+      // on load. Mirrors the logic in ThemeContext.tsx exactly.
+      (function () {
+        try {
+          var stored = localStorage.getItem('rag-assistant-theme');
+          var theme = stored === 'light' || stored === 'dark'
+            ? stored
+            : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+          if (theme === 'dark') document.documentElement.classList.add('dark');
+        } catch (e) {
+          /* localStorage unavailable - default to light, no crash */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

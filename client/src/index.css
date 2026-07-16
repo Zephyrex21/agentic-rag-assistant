@@ -1,0 +1,147 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Fraunces (display serif, used sparingly for hero/headline moments)
+   and JetBrains Mono (technical/utility face - chunk indices, scores) */
+@import "@fontsource-variable/fraunces";
+@import "@fontsource-variable/jetbrains-mono";
+
+/*
+  Design tokens. Two accents by design, not one:
+  - accent    -> "intelligence" actions (send, active states, primary CTAs)
+  - highlight -> anything citation-related (badges, source cards)
+  Keeps the citation system visually distinct from the rest of the UI at a glance.
+*/
+:root {
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --ink: #16161a;
+  --ink-muted: #6b6b73;
+  --accent: #5b4fe9;
+  --accent-ink: #ffffff;
+  --highlight: #f5a623;
+  --highlight-ink: #16161a;
+  --border-color: #e5e5ea;
+  --overlay: rgba(22, 22, 26, 0.4);
+  --glass: rgba(255, 255, 255, 0.72);
+}
+
+.dark {
+  --bg: #0b0b0d;
+  --surface: #17171a;
+  --surface-raised: #1e1e22;
+  --ink: #f5f5f7;
+  --ink-muted: #9a9aa2;
+  --accent: #7c72ff;
+  --accent-ink: #0b0b0d;
+  --highlight: #ffb84d;
+  --highlight-ink: #0b0b0d;
+  --border-color: #2a2a2e;
+  --overlay: rgba(0, 0, 0, 0.6);
+  --glass: rgba(23, 23, 26, 0.72);
+}
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-highlight: var(--highlight);
+  --color-highlight-ink: var(--highlight-ink);
+  --color-border: var(--border-color);
+  --color-overlay: var(--overlay);
+  --color-glass: var(--glass);
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+    "Segoe UI Variable", "Inter", system-ui, sans-serif;
+  --font-serif: "Fraunces Variable", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-background);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+#root {
+  min-height: 100svh;
+}
+
+/* Respect reduced-motion as a global safety net. Framer Motion components
+   additionally check useReducedMotion() where animation is more than a
+   simple fade, but this catches any plain CSS transition too. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Visible keyboard focus everywhere - accessibility floor from the design brief */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: var(--color-highlight);
+  color: var(--color-highlight-ink);
+}
+
+/* Reusable glass-panel effect for citation cards, modals, and the sidebar */
+.glass-panel {
+  background: var(--color-glass);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--color-border);
+}
+
+/* cmdk command palette - group headings are internal elements we can't
+   reach via a React className prop, so styled directly here */
+[cmdk-group-heading] {
+  padding: 0.5rem 0.75rem 0.25rem;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-ink-muted);
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-muted);
+}
