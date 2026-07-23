@@ -15,8 +15,14 @@ export function CitationCard({ source }: { source: Source }) {
       className="glass-panel w-80 max-w-[85vw] rounded-2xl p-4 shadow-2xl"
     >
       <div className="flex items-start gap-2.5">
-        <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-highlight/15 text-highlight">
-          <FileText size={12} />
+        <div
+          className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+          style={{
+            background: 'linear-gradient(135deg, color-mix(in srgb, var(--highlight) 22%, transparent), color-mix(in srgb, var(--highlight-2) 14%, transparent))',
+            color: 'var(--highlight)',
+          }}
+        >
+          <FileText size={13} />
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-ink">{source.filename}</p>

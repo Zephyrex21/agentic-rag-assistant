@@ -22,7 +22,10 @@ export function DocumentScopeBar() {
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-surface px-4 py-2.5 sm:px-6">
+    <div
+      className="flex flex-wrap items-center gap-1.5 border-b border-border-subtle bg-surface px-4 py-2.5 sm:px-6"
+      style={{ boxShadow: '0 8px 24px -16px rgba(22,22,26,0.08)' }}
+    >
       {scopedDocs.length === 0 ? (
         <span className="flex items-center gap-1.5 rounded-full bg-background px-2.5 py-1 text-xs text-ink-muted">
           <Globe size={11} />

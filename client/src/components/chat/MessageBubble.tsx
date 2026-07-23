@@ -1,5 +1,5 @@
-import { motion } from 'framer-motion';
-import { ChevronDown, Sparkles, Search } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ChevronDown, Sparkles, Search, ShieldCheck, ShieldAlert, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
 import { AnswerText } from '../citations/AnswerText';
 import { CitationBadge } from '../citations/CitationBadge';
@@ -14,7 +14,13 @@ export function MessageBubble({ message }: { message: Message }) {
         transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
         className="flex justify-end"
       >
-        <div className="max-w-[80%] rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-[15px] text-accent-ink">
+        <div
+          className="max-w-[80%] rounded-2xl rounded-br-md px-4 py-2.5 text-[15px] text-accent-ink"
+          style={{
+            background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
+            boxShadow: '0 1px 0 0 rgba(255,255,255,0.15) inset, 0 4px 14px -6px var(--accent)',
+          }}
+        >
           {message.content}
         </div>
       </motion.div>
@@ -25,6 +31,7 @@ export function MessageBubble({ message }: { message: Message }) {
   const cited = sources.filter((s) => s.cited);
   const uncited = sources.filter((s) => !s.cited);
   const showSearching = message.isStreaming && message.phase === 'searching';
+  const showRevising = message.isStreaming && message.phase === 'revising';
 
   return (
     <motion.div
@@ -33,21 +40,38 @@ export function MessageBubble({ message }: { message: Message }) {
       transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
       className="flex gap-3"
     >
-      <div className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent/10 text-accent">
-        <Sparkles size={12} />
+      <div
+        className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-accent-ink"
+        style={{
+          background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
+          boxShadow: '0 2px 8px -2px var(--accent)',
+        }}
+      >
+        <Sparkles size={13} />
       </div>
       <div className="min-w-0 max-w-[85%] flex-1">
-        {showSearching ? (
-          <SearchingIndicator />
-        ) : (
-          <>
-            <AnswerText content={message.content} sources={message.sources} />
-            {message.isStreaming && <StreamingCursor />}
-            {!message.isStreaming && sources.length > 0 && (
-              <SourcesSummary citedCount={cited.length} uncited={uncited} />
-            )}
-          </>
-        )}
+        <AnimatePresence mode="wait">
+          {showSearching ? (
+            <motion.div key="searching" exit={{ opacity: 0 }}>
+              <SearchingIndicator />
+            </motion.div>
+          ) : showRevising ? (
+            <motion.div key="revising" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+              <RevisingIndicator />
+            </motion.div>
+          ) : (
+            <motion.div key="content" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+              <AnswerText content={message.content} sources={message.sources} />
+              {message.isStreaming && <StreamingCursor />}
+              {!message.isStreaming && (
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  {sources.length > 0 && <SourcesSummary citedCount={cited.length} uncited={uncited} />}
+                  <VerificationBadge verified={message.verified} wasRevised={message.wasRevised} />
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </motion.div>
   );
@@ -72,6 +96,21 @@ function SearchingIndicator() {
   );
 }
 
+function RevisingIndicator() {
+  return (
+    <div className="flex items-center gap-2 text-sm text-highlight">
+      <motion.span
+        animate={{ rotate: 360 }}
+        transition={{ duration: 1.2, repeat: Infinity, ease: 'linear' }}
+        className="flex shrink-0"
+      >
+        <RotateCcw size={13} />
+      </motion.span>
+      <span>Double-checking this answer against the sources...</span>
+    </div>
+  );
+}
+
 function StreamingCursor() {
   return (
     <motion.span
@@ -82,13 +121,40 @@ function StreamingCursor() {
   );
 }
 
+/**
+ * Deliberately quiet in the common case (verified on the first try - no
+ * badge at all, avoids clutter on every single answer). Only speaks up
+ * when something notable happened: a self-correction (positive framing -
+ * it caught its own mistake) or a still-uncertain answer after one
+ * revision attempt (honest, not alarmist).
+ */
+function VerificationBadge({ verified, wasRevised }: { verified?: boolean; wasRevised?: boolean }) {
+  if (!wasRevised) return null;
+
+  if (verified) {
+    return (
+      <span className="flex items-center gap-1 text-xs text-accent">
+        <ShieldCheck size={12} />
+        Revised for accuracy
+      </span>
+    );
+  }
+
+  return (
+    <span className="flex items-center gap-1 text-xs text-highlight">
+      <ShieldAlert size={12} />
+      May not be fully supported by the sources
+    </span>
+  );
+}
+
 function SourcesSummary({ citedCount, uncited }: { citedCount: number; uncited: Message['sources'] }) {
   const [open, setOpen] = useState(false);
   const uncitedList = uncited || [];
   if (citedCount === 0 && uncitedList.length === 0) return null;
 
   return (
-    <div className="mt-2">
+    <div>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}

@@ -13,33 +13,53 @@
   Keeps the citation system visually distinct from the rest of the UI at a glance.
 */
 :root {
-  --bg: #fafafa;
+  --bg: #f7f7f5;
   --surface: #ffffff;
-  --surface-raised: #ffffff;
+  --surface-raised: #f2f2ef;
   --ink: #16161a;
   --ink-muted: #6b6b73;
   --accent: #5b4fe9;
+  --accent-2: #7c72ff;
   --accent-ink: #ffffff;
   --highlight: #f5a623;
+  --highlight-2: #ffb84d;
   --highlight-ink: #16161a;
-  --border-color: #e5e5ea;
+  --border-color: #e9e9ec;
+  --border-subtle: #f0f0f2;
   --overlay: rgba(22, 22, 26, 0.4);
-  --glass: rgba(255, 255, 255, 0.72);
+  --glass: rgba(255, 255, 255, 0.75);
+  --glass-border: rgba(255, 255, 255, 0.9);
+  /* Apple-style shadows: soft, diffused, low-opacity, large radius - not
+     crisp small drop-shadows. Layered (two shadows per level) for realism. */
+  --shadow-xs: 0 1px 2px rgba(22, 22, 26, 0.04);
+  --shadow-sm: 0 1px 3px rgba(22, 22, 26, 0.05), 0 1px 2px rgba(22, 22, 26, 0.04);
+  --shadow-md: 0 4px 16px rgba(22, 22, 26, 0.06), 0 2px 6px rgba(22, 22, 26, 0.04);
+  --shadow-lg: 0 12px 32px rgba(22, 22, 26, 0.09), 0 4px 12px rgba(22, 22, 26, 0.05);
+  --shadow-xl: 0 24px 64px rgba(22, 22, 26, 0.14), 0 8px 24px rgba(22, 22, 26, 0.07);
 }
 
 .dark {
-  --bg: #0b0b0d;
+  --bg: #08080a;
   --surface: #17171a;
-  --surface-raised: #1e1e22;
+  --surface-raised: #202024;
   --ink: #f5f5f7;
   --ink-muted: #9a9aa2;
   --accent: #7c72ff;
+  --accent-2: #9d95ff;
   --accent-ink: #0b0b0d;
   --highlight: #ffb84d;
+  --highlight-2: #ffcb7a;
   --highlight-ink: #0b0b0d;
   --border-color: #2a2a2e;
+  --border-subtle: #202024;
   --overlay: rgba(0, 0, 0, 0.6);
-  --glass: rgba(23, 23, 26, 0.72);
+  --glass: rgba(23, 23, 26, 0.75);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.36), 0 2px 6px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.44), 0 4px 12px rgba(0, 0, 0, 0.28);
+  --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.56), 0 8px 24px rgba(0, 0, 0, 0.32);
 }
 
 @theme inline {
@@ -49,12 +69,24 @@
   --color-ink: var(--ink);
   --color-ink-muted: var(--ink-muted);
   --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
   --color-accent-ink: var(--accent-ink);
   --color-highlight: var(--highlight);
+  --color-highlight-2: var(--highlight-2);
   --color-highlight-ink: var(--highlight-ink);
   --color-border: var(--border-color);
+  --color-border-subtle: var(--border-subtle);
   --color-overlay: var(--overlay);
   --color-glass: var(--glass);
+
+  /* Overrides Tailwind's default shadow-* utilities with our Apple-style
+     soft/diffused/layered shadows - any shadow-sm/md/lg/xl usage anywhere
+     in the app automatically gets the real elevation system. */
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
 
   --font-sans:
     -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
@@ -113,12 +145,28 @@ body {
   color: var(--color-highlight-ink);
 }
 
-/* Reusable glass-panel effect for citation cards, modals, and the sidebar */
+/* Reusable glass-panel effect for citation cards, modals, and the sidebar.
+   The inset highlight (a faint light border on top) is the detail that
+   makes glass read as "frosted material catching light" rather than just
+   a flat semi-transparent box - a classic glassmorphism cue that's easy
+   to skip and immediately looks cheaper without it. */
 .glass-panel {
   background: var(--color-glass);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
   border: 1px solid var(--color-border);
+  box-shadow:
+    inset 0 1px 0 0 var(--glass-border),
+    var(--shadow-lg);
+}
+
+/* Lift-on-hover for interactive cards/rows - subtle, not a full "float" */
+.elevation-hover {
+  transition: box-shadow 0.25s ease, transform 0.25s ease;
+}
+.elevation-hover:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 
 /* cmdk command palette - group headings are internal elements we can't

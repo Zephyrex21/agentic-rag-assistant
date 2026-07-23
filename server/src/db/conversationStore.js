@@ -16,6 +16,8 @@ function messageFromDb(row) {
     role: row.role,
     content: row.content,
     sources: row.sources || null,
+    verified: row.verified,
+    wasRevised: row.was_revised || false,
     createdAt: row.created_at,
   };
 }
@@ -70,11 +72,11 @@ async function getRecentMessages(conversationId, limit = 6) {
   return (data || []).reverse().map(messageFromDb); // back to oldest-first
 }
 
-async function addMessage(conversationId, { role, content, sources = null }) {
+async function addMessage(conversationId, { role, content, sources = null, verified = null, wasRevised = false }) {
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from(MESSAGES)
-    .insert({ conversation_id: conversationId, role, content, sources })
+    .insert({ conversation_id: conversationId, role, content, sources, verified, was_revised: wasRevised })
     .select()
     .single();
   if (error) throw new Error(`conversationStore.addMessage failed: ${error.message}`);

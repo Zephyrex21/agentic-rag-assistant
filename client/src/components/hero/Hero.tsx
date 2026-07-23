@@ -77,9 +77,13 @@ export function Hero({ onEnter }: { onEnter: () => void }) {
             <motion.button
               type="button"
               onClick={onEnter}
-              whileHover={reduceMotion ? {} : { scale: 1.03 }}
-              whileTap={reduceMotion ? {} : { scale: 0.97 }}
-              className="group mt-2 flex items-center gap-2 rounded-full bg-accent px-6 py-3 font-medium text-accent-ink shadow-lg shadow-accent/20 transition-shadow hover:shadow-xl hover:shadow-accent/30 cursor-pointer"
+              whileHover={reduceMotion ? {} : { scale: 1.03, y: -1 }}
+              whileTap={reduceMotion ? {} : { scale: 0.97, y: 0 }}
+              className="group mt-2 flex items-center gap-2 rounded-full px-6 py-3 font-medium text-accent-ink cursor-pointer"
+              style={{
+                background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
+                boxShadow: '0 1px 0 0 rgba(255,255,255,0.15) inset, 0 8px 24px -8px var(--accent)',
+              }}
             >
               Enter the assistant
               <ArrowRight

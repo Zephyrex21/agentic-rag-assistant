@@ -4,7 +4,8 @@ const { keywordSearch } = require('./keywordSearch');
 const { reciprocalRankFusion, normalizeRrfScore } = require('./rrf');
 const { rewriteQuery } = require('./queryRewriter');
 const { rerank } = require('./reranker');
-const { generateAnswer, generateAnswerStream } = require('./llm');
+const { verifyAnswer } = require('./selfVerification');
+const { generateAnswerStream } = require('./llm');
 
 const TOP_K = parseInt(process.env.RETRIEVAL_TOP_K || '5', 10);
 const CANDIDATE_POOL = parseInt(process.env.RETRIEVAL_CANDIDATE_POOL || '15', 10);
@@ -22,6 +23,7 @@ const RERANK_RESCUE_THRESHOLD = parseFloat(process.env.RERANK_RESCUE_THRESHOLD |
 const ENABLE_QUERY_REWRITE = process.env.ENABLE_QUERY_REWRITE !== 'false';
 const ENABLE_HYBRID_SEARCH = process.env.ENABLE_HYBRID_SEARCH !== 'false';
 const ENABLE_RERANKING = process.env.ENABLE_RERANKING !== 'false';
+const ENABLE_SELF_VERIFICATION = process.env.ENABLE_SELF_VERIFICATION !== 'false';
 
 const NO_INFO_ANSWER =
   "I don't have enough relevant information in the uploaded documents to answer that. Try rephrasing, or upload a document that covers this topic.";
@@ -160,29 +162,24 @@ function buildSources(finalChunks, listsUsed, citedNumbers) {
 }
 
 /**
- * Full retrieve-then-answer pipeline (non-streaming).
- * @returns {Promise<{answer: string, sources: Array}>}
- */
-async function retrieveAndAnswer(question, options = {}) {
-  const { chunks, listsUsed } = await retrieveChunks(question, options);
-  if (!chunks) {
-    return { answer: NO_INFO_ANSWER, sources: [] };
-  }
-
-  const answer = await generateAnswer(question, chunks, options.history || []);
-  const citedNumbers = extractCitedSourceNumbers(answer);
-  return { answer, sources: buildSources(chunks, listsUsed, citedNumbers) };
-}
-
-/**
  * Streaming retrieve-then-answer pipeline. Retrieval itself (rewrite, search,
  * fuse, rerank) is NOT streamed - it's fast enough that streaming it wouldn't
  * meaningfully help, and streaming only the generation step keeps this much
  * simpler. Yields events for a route handler to forward as SSE:
  *   { type: 'sources', sources }  - as soon as retrieval completes (cited flags not yet known)
- *   { type: 'chunk', text }       - repeated, as the answer streams in
- *   { type: 'done', answer, sources } - final answer + sources with correct cited flags
+ *   { type: 'chunk', text }       - repeated, as the answer streams in (fired again
+ *                                    for a revision pass, if one happens)
+ *   { type: 'revising', issue }   - self-verification found a problem; a corrected
+ *                                    answer is about to stream in, replacing this one
+ *   { type: 'done', answer, sources, verified, wasRevised } - final state
  *   { type: 'no_info' }           - nothing relevant found, no generation call made
+ *
+ * Self-verification runs after a first answer streams in: one cheap batched
+ * call checks whether the answer is actually supported by its sources. If
+ * not, ONE revision pass runs with the specific critique fed back into the
+ * prompt, and streams in as a visible correction rather than a silent retry.
+ * Capped at a single revision regardless of outcome - this is meant to catch
+ * genuine mistakes, not loop indefinitely chasing a perfect score.
  */
 async function* retrieveAndAnswerStream(question, options = {}) {
   const { chunks, listsUsed } = await retrieveChunks(question, options);
@@ -192,21 +189,47 @@ async function* retrieveAndAnswerStream(question, options = {}) {
     return;
   }
 
-  // Sources are known before generation starts (retrieval already happened) -
-  // send them early so the UI can show "answering from these N sources"
-  // immediately, before any text has streamed in. `cited` isn't knowable yet.
   const preliminarySources = buildSources(chunks, listsUsed, new Set());
   yield { type: 'sources', sources: preliminarySources };
 
+  const history = options.history || [];
   let fullAnswer = '';
-  for await (const textChunk of generateAnswerStream(question, chunks, options.history || [])) {
+  for await (const textChunk of generateAnswerStream(question, chunks, history)) {
     fullAnswer += textChunk;
     yield { type: 'chunk', text: textChunk };
   }
 
-  const citedNumbers = extractCitedSourceNumbers(fullAnswer);
-  const finalSources = buildSources(chunks, listsUsed, citedNumbers);
-  yield { type: 'done', answer: fullAnswer, sources: finalSources };
+  let citedNumbers = extractCitedSourceNumbers(fullAnswer);
+  let finalSources = buildSources(chunks, listsUsed, citedNumbers);
+  let verified = true;
+  let wasRevised = false;
+
+  if (ENABLE_SELF_VERIFICATION) {
+    const check = await verifyAnswer(question, fullAnswer, finalSources);
+
+    if (!check.passed) {
+      yield { type: 'revising', issue: check.issue };
+
+      let revisedAnswer = '';
+      const revision = { previousAnswer: fullAnswer, issues: check.issue };
+      for await (const textChunk of generateAnswerStream(question, chunks, history, revision)) {
+        revisedAnswer += textChunk;
+        yield { type: 'chunk', text: textChunk };
+      }
+
+      fullAnswer = revisedAnswer;
+      citedNumbers = extractCitedSourceNumbers(fullAnswer);
+      finalSources = buildSources(chunks, listsUsed, citedNumbers);
+      wasRevised = true;
+
+      // One more check on the revised answer, purely for the `verified`
+      // flag shown in the UI - does NOT trigger a second revision loop.
+      const secondCheck = await verifyAnswer(question, fullAnswer, finalSources);
+      verified = secondCheck.passed;
+    }
+  }
+
+  yield { type: 'done', answer: fullAnswer, sources: finalSources, verified, wasRevised };
 }
 
-module.exports = { retrieveAndAnswer, retrieveAndAnswerStream, NO_INFO_ANSWER, extractCitedSourceNumbers };
+module.exports = { retrieveAndAnswerStream, NO_INFO_ANSWER, extractCitedSourceNumbers };

@@ -13,8 +13,14 @@ export function Composer({ onSend, disabled }: { onSend: (text: string) => void;
     setValue('');
   };
 
+  const canSend = !disabled && value.trim().length > 0;
+
   return (
-    <form onSubmit={submit} className="flex items-end gap-2 border-t border-border bg-surface p-4">
+    <form
+      onSubmit={submit}
+      className="flex items-end gap-2 border-t border-border-subtle bg-surface p-4"
+      style={{ boxShadow: '0 -8px 24px -12px rgba(22,22,26,0.06)' }}
+    >
       <textarea
         value={value}
         onChange={(e) => setValue(e.target.value)}
@@ -25,13 +31,22 @@ export function Composer({ onSend, disabled }: { onSend: (text: string) => void;
         }}
         placeholder="Ask a question about your documents..."
         rows={1}
-        className="max-h-40 min-h-[42px] flex-1 resize-none rounded-xl border border-border bg-background px-3.5 py-2.5 text-[15px] text-ink placeholder:text-ink-muted focus:border-accent focus:outline-none"
+        className="max-h-40 min-h-[44px] flex-1 resize-none rounded-2xl border border-border bg-background px-4 py-3 text-[15px] text-ink placeholder:text-ink-muted transition-shadow duration-200 focus:outline-none"
+        style={{ boxShadow: 'none' }}
+        onFocus={(e) => (e.currentTarget.style.boxShadow = '0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent)')}
+        onBlur={(e) => (e.currentTarget.style.boxShadow = 'none')}
       />
       <motion.button
         type="submit"
-        disabled={disabled || !value.trim()}
-        whileTap={{ scale: 0.92 }}
-        className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl bg-accent text-accent-ink transition-opacity disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+        disabled={!canSend}
+        whileHover={canSend ? { scale: 1.05 } : {}}
+        whileTap={canSend ? { scale: 0.92 } : {}}
+        transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-accent-ink transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+        style={{
+          background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
+          boxShadow: canSend ? '0 1px 0 0 rgba(255,255,255,0.15) inset, 0 4px 14px -4px var(--accent)' : 'none',
+        }}
       >
         <ArrowUp size={18} />
       </motion.button>

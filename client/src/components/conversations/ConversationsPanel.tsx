@@ -69,8 +69,8 @@ function ConversationRow({
       <button
         type="button"
         onClick={onSelect}
-        className={`group flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors cursor-pointer ${
-          active ? 'bg-background text-ink' : 'text-ink-muted hover:bg-background/60'
+        className={`group flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm transition-all duration-200 cursor-pointer ${
+          active ? 'bg-background text-ink shadow-sm' : 'text-ink-muted hover:bg-background/60'
         }`}
       >
         <MessageSquare size={14} className="shrink-0" />

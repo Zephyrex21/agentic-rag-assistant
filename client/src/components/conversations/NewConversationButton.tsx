@@ -9,8 +9,14 @@ export function NewConversationButton() {
     <motion.button
       type="button"
       onClick={() => createConversation()}
-      whileTap={{ scale: 0.97 }}
-      className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-accent-ink cursor-pointer"
+      whileHover={{ scale: 1.015, y: -1 }}
+      whileTap={{ scale: 0.97, y: 0 }}
+      transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+      className="flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-sm font-medium text-accent-ink cursor-pointer"
+      style={{
+        background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
+        boxShadow: '0 1px 0 0 rgba(255,255,255,0.15) inset, 0 4px 14px -4px var(--accent)',
+      }}
     >
       <Plus size={14} />
       New conversation

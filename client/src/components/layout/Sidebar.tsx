@@ -32,7 +32,7 @@ export function Sidebar({ chatsSlot, documentsSlot, newConversationSlot, tab, on
 
       <div className="px-5 pt-4">{newConversationSlot}</div>
 
-      <div className="mt-4 flex gap-1 px-5">
+      <div className="mt-4 flex gap-0.5 rounded-xl bg-background p-1 mx-5" style={{ width: 'calc(100% - 2.5rem)' }}>
         <TabButton active={tab === 'chats'} onClick={() => onTabChange('chats')} icon={<MessageSquare size={14} />}>
           Chats
         </TabButton>
@@ -41,7 +41,7 @@ export function Sidebar({ chatsSlot, documentsSlot, newConversationSlot, tab, on
         </TabButton>
       </div>
 
-      <div className="mt-2 flex-1 overflow-y-auto px-3 pb-4">
+      <div className="mt-3 flex-1 overflow-y-auto px-3 pb-4">
         {tab === 'chats' ? chatsSlot : documentsSlot}
       </div>
     </div>
@@ -63,12 +63,12 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
-      className="relative flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors cursor-pointer"
+      className="relative flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer"
     >
       {active && (
         <motion.div
           layoutId="sidebar-tab-active"
-          className="absolute inset-0 rounded-lg bg-background"
+          className="absolute inset-0 rounded-lg bg-surface shadow-sm"
           transition={{ type: 'spring', stiffness: 400, damping: 30 }}
         />
       )}

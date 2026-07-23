@@ -88,7 +88,7 @@ function DocumentRow({ doc, onRemove }: { doc: DocumentSummary; onRemove: (id: s
       animate={{ opacity: 1, height: 'auto' }}
       exit={{ opacity: 0, height: 0 }}
       transition={{ duration: 0.2 }}
-      className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 hover:bg-background"
+      className="elevation-hover group flex items-center gap-2.5 rounded-xl px-2.5 py-2 hover:bg-background"
     >
       <FileText size={15} className="shrink-0 text-ink-muted" />
       <div className="min-w-0 flex-1">

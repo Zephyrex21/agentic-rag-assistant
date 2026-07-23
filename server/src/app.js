@@ -54,6 +54,7 @@ app.get('/health', (req, res) => {
       queryRewrite: process.env.ENABLE_QUERY_REWRITE !== 'false',
       hybridSearch: process.env.ENABLE_HYBRID_SEARCH !== 'false',
       reranking: process.env.ENABLE_RERANKING !== 'false',
+      selfVerification: process.env.ENABLE_SELF_VERIFICATION !== 'false',
     },
     ...(modelWarnings.length > 0 ? { modelWarnings } : {}),
   });

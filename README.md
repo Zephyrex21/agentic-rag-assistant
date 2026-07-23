@@ -13,6 +13,7 @@ Most RAG tutorials stop at "embed chunks, do a vector search, stuff into a promp
 - **Hybrid retrieval** — vector search (Pinecone) and keyword search (Postgres full-text) run in parallel and get fused with Reciprocal Rank Fusion, so a chunk that's a strong match on *either* signal surfaces correctly
 - **LLM reranking** — a single batched call re-judges the fused candidates for genuine relevance, not just similarity score, before anything reaches the answering model
 - **Query rewriting** — follow-up questions ("what about the second one?") get expanded into standalone queries using conversation history before retrieval runs
+- **Self-verification** — after an answer is generated, a separate check asks whether it's actually supported by the cited sources. If not, one corrected revision streams in as a visible replacement, with the specific problem fed back into the prompt — not a silent retry
 - **Verifiable citations** — every claim in an answer links back to the exact source chunk, with the model's own citation graph reflected in the UI (used vs. merely-retrieved sources are shown separately)
 
 ## Architecture
@@ -29,7 +30,10 @@ flowchart LR
     KW --> FUSE
     FUSE --> RERANK[LLM Reranking]
     RERANK --> GEN[Answer generation<br/>+ streaming]
-    GEN --> OUT[Cited answer]
+    GEN --> VERIFY{Self-verification:<br/>supported by sources?}
+    VERIFY -->|yes| OUT[Cited answer]
+    VERIFY -->|no, one retry| REVISE[Revised answer<br/>+ critique fed back]
+    REVISE --> OUT
 ```
 
 ## Key Features
@@ -37,6 +41,7 @@ flowchart LR
 **Retrieval & answering**
 - Structure-aware document chunking (markdown-header-aware, word-window fallback for plain text/PDF)
 - Hybrid search fused with RRF, LLM reranking with a rescue safety net for broad/overview questions
+- Self-verification with a single visible revision pass — answers are checked against their own cited sources after generation
 - Streaming responses via Server-Sent Events — answers appear token-by-token
 - Multi-key Gemini distribution (separate keys for embedding/generation/utility calls, with automatic fallback if a model becomes unavailable)
 
@@ -72,7 +77,7 @@ agentic-rag-assistant/
 │   ├── src/
 │   │   ├── routes/       # documents, query, conversations (SSE streaming)
 │   │   ├── services/     # chunking, embeddings, retrieval pipeline, reranking,
-│   │   │                 # query rewriting, RRF fusion, model resilience
+│   │   │                 # query rewriting, self-verification, RRF fusion, model resilience
 │   │   ├── db/           # Supabase-backed stores (documents, conversations, chunks)
 │   │   ├── workers/      # async ingestion pipeline
 │   │   └── utils/        # standalone test suites for pure/testable logic
@@ -90,7 +95,7 @@ agentic-rag-assistant/
 Free-tier accounts for [Google AI Studio](https://aistudio.google.com/apikey), [Pinecone](https://app.pinecone.io), and [Supabase](https://supabase.com) — no paid tier required.
 
 ### 1. Supabase setup
-Run `server/supabase/schema.sql`, then `server/supabase/migration_002_hybrid_search.sql` in the Supabase SQL Editor.
+Run `server/supabase/schema.sql`, then `server/supabase/migration_002_hybrid_search.sql`, then `server/supabase/migration_003_self_verification.sql` in the Supabase SQL Editor.
 
 ### 2. Pinecone setup
 Create an index named to match `PINECONE_INDEX_NAME`, with **dimension 768** and **cosine** metric.
@@ -119,7 +124,7 @@ All configuration lives in `server/.env` (see `.env.example` for the full list w
 | Variable | Purpose |
 |---|---|
 | `GEMINI_API_KEY_*` | Optional per-role key distribution (embedding/generation/utility) — falls back to a single `GEMINI_API_KEY` if unset |
-| `ENABLE_HYBRID_SEARCH`, `ENABLE_RERANKING`, `ENABLE_QUERY_REWRITE` | Toggle any pipeline stage independently, no code changes needed |
+| `ENABLE_HYBRID_SEARCH`, `ENABLE_RERANKING`, `ENABLE_QUERY_REWRITE`, `ENABLE_SELF_VERIFICATION` | Toggle any pipeline stage independently, no code changes needed |
 | `RETRIEVAL_TOP_K`, `RETRIEVAL_CANDIDATE_POOL` | Tune how many chunks are considered vs. sent to the model |
 | `GENERATION_MODEL_FALLBACK`, `UTILITY_MODEL_FALLBACK` | Automatic fallback models if a primary model is deprecated/unavailable |
 
@@ -149,6 +154,7 @@ npm run test:reranker      # reranker response parsing, including malformed mode
 npm run test:citations     # citation extraction from answer text
 npm run test:modelfallback # model deprecation fallback behavior
 npm run test:thinking      # thinking-token config per model family
+npm run test:verification  # self-verification response parsing, fail-open behavior
 npm run test:prompt        # prompt construction, with/without conversation history
 ```
 
@@ -160,7 +166,6 @@ npm run test:prompt        # prompt construction, with/without conversation hist
 
 ## Roadmap
 
-- Agentic self-verification — a post-generation check that re-retrieves if the answer isn't well-supported by its cited sources
 - Evaluation harness — automated retrieval precision/recall and answer faithfulness scoring against a golden question set
 - Production hardening — rate limiting, auth, structured observability
 

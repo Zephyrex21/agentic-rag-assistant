@@ -161,11 +161,20 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
                 : prev
             );
           },
+          onRevising: (issue) => {
+            // Self-verification found a problem - a corrected answer is
+            // about to stream in as a fresh set of chunks. Clear the
+            // current (flawed) text so the correction rebuilds cleanly
+            // rather than appending onto the answer being replaced.
+            updateStreamingMessage({ content: '', phase: 'revising', revisionIssue: issue });
+          },
           onDone: (result) => {
             updateStreamingMessage({
               id: result.messageId || streamingId,
               content: result.answer,
               sources: result.sources,
+              verified: result.verified,
+              wasRevised: result.wasRevised,
               isStreaming: false,
             });
             refreshList();

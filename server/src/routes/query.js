@@ -41,12 +41,18 @@ router.post('/', async (req, res) => {
   try {
     let finalAnswer = '';
     let finalSources = [];
+    let verified = true;
+    let wasRevised = false;
 
     for await (const event of retrieveAndAnswerStream(question, { documentIds })) {
       if (clientDisconnected) break;
 
       if (event.type === 'sources') {
         writeSseEvent(res, 'sources', { sources: event.sources });
+      } else if (event.type === 'revising') {
+        // Self-verification found a problem with the first draft - a
+        // corrected answer is about to stream in as a fresh set of chunks.
+        writeSseEvent(res, 'revising', { issue: event.issue });
       } else if (event.type === 'chunk') {
         writeSseEvent(res, 'chunk', { text: event.text });
       } else if (event.type === 'no_info') {
@@ -55,12 +61,20 @@ router.post('/', async (req, res) => {
       } else if (event.type === 'done') {
         finalAnswer = event.answer;
         finalSources = event.sources;
+        verified = event.verified ?? true;
+        wasRevised = event.wasRevised ?? false;
       }
     }
 
     if (clientDisconnected) return;
 
-    writeSseEvent(res, 'done', { answer: finalAnswer, sources: finalSources, queryId: randomUUID() });
+    writeSseEvent(res, 'done', {
+      answer: finalAnswer,
+      sources: finalSources,
+      verified,
+      wasRevised,
+      queryId: randomUUID(),
+    });
     res.end();
   } catch (err) {
     console.error('[query] stream failed:', err.message);

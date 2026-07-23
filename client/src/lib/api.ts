@@ -92,11 +92,14 @@ export interface StreamDoneResult {
   queryId?: string;
   answer: string;
   sources: Source[];
+  verified?: boolean;
+  wasRevised?: boolean;
 }
 
 export interface StreamCallbacks {
   onSources?: (sources: Source[]) => void;
   onChunk?: (text: string) => void;
+  onRevising?: (issue: string) => void;
   onDone?: (result: StreamDoneResult) => void;
   onError?: (message: string) => void;
 }
@@ -134,6 +137,7 @@ async function consumeSseStream(res: Response, callbacks: StreamCallbacks) {
         try {
           const data = JSON.parse(dataLine);
           if (eventName === 'sources') callbacks.onSources?.(data.sources);
+          else if (eventName === 'revising') callbacks.onRevising?.(data.issue);
           else if (eventName === 'chunk') callbacks.onChunk?.(data.text);
           else if (eventName === 'done') callbacks.onDone?.(data);
           else if (eventName === 'error') callbacks.onError?.(data.message);

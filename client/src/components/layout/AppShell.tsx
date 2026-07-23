@@ -13,7 +13,12 @@ export function AppShell({ sidebar, main }: AppShellProps) {
   return (
     <div className="flex h-svh w-full overflow-hidden bg-background">
       {/* Desktop sidebar - always visible, static */}
-      <aside className="hidden w-80 shrink-0 border-r border-border md:block">{sidebar}</aside>
+      <aside
+        className="hidden w-80 shrink-0 border-r border-border-subtle md:block"
+        style={{ boxShadow: '2px 0 12px -4px rgba(22,22,26,0.03)' }}
+      >
+        {sidebar}
+      </aside>
 
       {/* Mobile sidebar - slide-over with backdrop */}
       <AnimatePresence>

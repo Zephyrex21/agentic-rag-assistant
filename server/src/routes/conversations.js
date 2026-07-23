@@ -101,12 +101,16 @@ router.post('/:id/messages', async (req, res) => {
 
     let finalAnswer = '';
     let finalSources = [];
+    let verified = true;
+    let wasRevised = false;
 
     for await (const event of retrieveAndAnswerStream(question, { documentIds, history })) {
       if (clientDisconnected) break; // stop doing work if nobody's listening anymore
 
       if (event.type === 'sources') {
         writeSseEvent(res, 'sources', { sources: event.sources });
+      } else if (event.type === 'revising') {
+        writeSseEvent(res, 'revising', { issue: event.issue });
       } else if (event.type === 'chunk') {
         writeSseEvent(res, 'chunk', { text: event.text });
       } else if (event.type === 'no_info') {
@@ -115,6 +119,8 @@ router.post('/:id/messages', async (req, res) => {
       } else if (event.type === 'done') {
         finalAnswer = event.answer;
         finalSources = event.sources;
+        verified = event.verified ?? true;
+        wasRevised = event.wasRevised ?? false;
       }
     }
 
@@ -124,13 +130,21 @@ router.post('/:id/messages', async (req, res) => {
       role: 'assistant',
       content: finalAnswer,
       sources: finalSources,
+      verified,
+      wasRevised,
     });
 
     if (conversation.title === 'New conversation' && conversation.messages.length === 0) {
       await conversationStore.updateTitle(conversationId, titleFromQuestion(question));
     }
 
-    writeSseEvent(res, 'done', { messageId: assistantMessage.id, answer: finalAnswer, sources: finalSources });
+    writeSseEvent(res, 'done', {
+      messageId: assistantMessage.id,
+      answer: finalAnswer,
+      sources: finalSources,
+      verified,
+      wasRevised,
+    });
     res.end();
   } catch (err) {
     console.error('[conversations] message stream failed:', err.message);
