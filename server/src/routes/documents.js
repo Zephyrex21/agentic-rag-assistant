@@ -127,7 +127,7 @@ router.delete('/:id', async (req, res) => {
     if (!doc) return errorResponse(res, 404, 'DOCUMENT_NOT_FOUND', 'No document with that ID.');
 
     try {
-      await deleteByDocumentId(req.params.id);
+      await deleteByDocumentId(req.params.id, doc.chunkCount);
     } catch (pineconeErr) {
       // If Pinecone isn't configured yet, still allow metadata cleanup to proceed
       console.warn(`[documents] Pinecone delete skipped/failed for ${req.params.id}:`, pineconeErr.message);
