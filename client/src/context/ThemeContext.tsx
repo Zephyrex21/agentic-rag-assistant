@@ -10,6 +10,12 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 const STORAGE_KEY = 'rag-assistant-theme';
+// Separate flag for "the user actually clicked the toggle" - distinct from
+// STORAGE_KEY, which gets written on every mount (including when the theme
+// just came from the OS default). Without this split, the system-preference
+// listener below could never fire: STORAGE_KEY would already be set the
+// instant the app first rendered, even with zero user interaction.
+const EXPLICIT_CHOICE_KEY = 'rag-assistant-theme-explicit';
 
 function getInitialTheme(): Theme {
   const stored = localStorage.getItem(STORAGE_KEY);
@@ -32,7 +38,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const mql = window.matchMedia('(prefers-color-scheme: dark)');
     const handleChange = (e: MediaQueryListEvent) => {
-      if (!localStorage.getItem(STORAGE_KEY)) {
+      if (!localStorage.getItem(EXPLICIT_CHOICE_KEY)) {
         setTheme(e.matches ? 'dark' : 'light');
       }
     };
@@ -40,7 +46,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => mql.removeEventListener('change', handleChange);
   }, []);
 
-  const toggleTheme = () => setTheme((t) => (t === 'light' ? 'dark' : 'light'));
+  const toggleTheme = () => {
+    localStorage.setItem(EXPLICIT_CHOICE_KEY, 'true');
+    setTheme((t) => (t === 'light' ? 'dark' : 'light'));
+  };
 
   return <ThemeContext.Provider value={{ theme, toggleTheme }}>{children}</ThemeContext.Provider>;
 }

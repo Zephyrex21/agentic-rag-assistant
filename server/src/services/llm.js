@@ -101,6 +101,9 @@ async function* generateAnswerStream(question, chunks, history = [], revision = 
   let lastError = null;
 
   for (const model of modelsToTry) {
+    // Declared outside the try block so the catch handler below can still
+    // see whether any text was already sent to the client for this model.
+    let yieldedAnything = false;
     try {
       const stream = await ai.models.generateContentStream({
         model,
@@ -108,7 +111,6 @@ async function* generateAnswerStream(question, chunks, history = [], revision = 
         config: buildGenerationConfig(model, { temperature: 0.2, maxOutputTokens: 1024 }),
       });
 
-      let yieldedAnything = false;
       for await (const chunk of stream) {
         if (chunk.text) {
           yieldedAnything = true;
@@ -123,10 +125,17 @@ async function* generateAnswerStream(question, chunks, history = [], revision = 
     } catch (err) {
       lastError = err;
       const { message } = parseGeminiError(err);
+
+      // If we already streamed some text to the client for this model, we
+      // can't cleanly retry with a fallback - the client would see a
+      // confusing partial-then-restarted answer. Let the error propagate
+      // instead of silently continuing to the next model in the loop.
+      if (yieldedAnything) {
+        console.warn(`[llm] streaming with "${model}" failed mid-stream after chunks were already sent - not retrying: ${message}`);
+        throw new Error(message);
+      }
+
       console.warn(`[llm] streaming with "${model}" failed, ${model === modelsToTry[modelsToTry.length - 1] ? 'no more fallbacks' : 'trying fallback'}: ${message}`);
-      // Only try the next model if we haven't yielded any chunks yet for
-      // THIS model - if we're mid-stream, let the error propagate instead
-      // of silently restarting (the client would see a confusing jump).
     }
   }
 
