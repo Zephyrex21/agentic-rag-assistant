@@ -14,7 +14,8 @@
     "test:reranker": "node src/utils/test-reranker.js",
     "test:modelfallback": "node src/utils/test-modelfallback.js",
     "test:thinking": "node src/utils/test-thinking.js",
-    "test:verification": "node src/utils/test-verification.js"
+    "test:verification": "node src/utils/test-verification.js",
+    "diagnose:gemini": "node src/utils/diagnose-gemini-key.js"
   },
   "dependencies": {
     "@google/genai": "^2.10.0",
