@@ -97,7 +97,7 @@ export function Hero({ onEnter }: { onEnter: () => void }) {
 
       <footer className="relative z-10 pb-8 text-center">
         <p className="font-mono text-[11px] text-ink-muted/70">
-          Gemini · Pinecone · Supabase
+          Groq · Jina AI · Pinecone · Supabase
         </p>
       </footer>
     </div>

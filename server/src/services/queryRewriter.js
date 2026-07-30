@@ -1,16 +1,12 @@
-const { getClient } = require('./geminiClient');
+const { getClient } = require('./groqClient');
 const { withModelFallback } = require('./modelFallback');
-const { buildGenerationConfig } = require('./thinkingConfig');
 
 // Deliberately the lighter/cheaper model - this is a mechanical rewrite task,
 // not a reasoning task, so it doesn't need the same model as the real answer.
-// gemini-3.1-flash-lite: stable GA, free tier, long runway (no shutdown
-// before May 2027 as of this writing).
-const MODEL = process.env.UTILITY_MODEL || 'gemini-3.1-flash-lite';
+const MODEL = process.env.UTILITY_MODEL || 'llama-3.1-8b-instant';
 // Cross-paired with llm.js's default (reverse of its pairing) - two
-// independent stable models covering each other, neither depends on the
-// 2.5 line, which is where the actual instability has been.
-const FALLBACK_MODEL = process.env.UTILITY_MODEL_FALLBACK || 'gemini-3.5-flash';
+// independent model families covering each other.
+const FALLBACK_MODEL = process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-20b';
 
 function buildRewritePrompt(question, history) {
   const historyText = history.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n');
@@ -42,18 +38,16 @@ async function rewriteQuery(question, history) {
   if (!history || history.length === 0) return question;
 
   try {
-    const ai = getClient('utility');
+    const client = getClient();
     const response = await withModelFallback(MODEL, FALLBACK_MODEL, (model) =>
-      ai.models.generateContent({
+      client.chat.completions.create({
         model,
-        contents: buildRewritePrompt(question, history),
-        config: buildGenerationConfig(model, {
-          temperature: 0.1,
-          maxOutputTokens: 150, // this is a short rewrite, not an essay - headroom for thinking is added automatically where needed
-        }),
+        messages: [{ role: 'user', content: buildRewritePrompt(question, history) }],
+        temperature: 0.1,
+        max_completion_tokens: 150, // this is a short rewrite, not an essay
       })
     );
-    const rewritten = response.text?.trim();
+    const rewritten = response.choices?.[0]?.message?.content?.trim();
     return rewritten || question;
   } catch (err) {
     console.warn('[queryRewriter] rewrite failed, falling back to original question:', err.message);

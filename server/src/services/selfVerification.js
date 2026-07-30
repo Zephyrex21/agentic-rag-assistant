@@ -1,11 +1,10 @@
-const { getClient } = require('./geminiClient');
-const { withModelFallback, parseGeminiError } = require('./modelFallback');
-const { buildGenerationConfig } = require('./thinkingConfig');
+const { getClient } = require('./groqClient');
+const { withModelFallback, parseGroqError } = require('./modelFallback');
 
 // Same lighter model as reranking/rewriting - this is a judgment task, not
 // a reasoning task, and needs to stay cheap since it runs on every answer.
-const MODEL = process.env.UTILITY_MODEL || 'gemini-3.1-flash-lite';
-const FALLBACK_MODEL = process.env.UTILITY_MODEL_FALLBACK || 'gemini-3.5-flash';
+const MODEL = process.env.UTILITY_MODEL || 'llama-3.1-8b-instant';
+const FALLBACK_MODEL = process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-20b';
 
 const EXCERPT_WORDS_FOR_VERIFY = 150;
 
@@ -81,17 +80,18 @@ async function verifyAnswer(question, answer, sources) {
   }
 
   try {
-    const ai = getClient('utility');
+    const client = getClient();
     const response = await withModelFallback(MODEL, FALLBACK_MODEL, (model) =>
-      ai.models.generateContent({
+      client.chat.completions.create({
         model,
-        contents: buildVerifyPrompt(question, answer, sources),
-        config: buildGenerationConfig(model, { temperature: 0, maxOutputTokens: 200 }),
+        messages: [{ role: 'user', content: buildVerifyPrompt(question, answer, sources) }],
+        temperature: 0,
+        max_completion_tokens: 200,
       })
     );
-    return parseVerifyResponse(response.text);
+    return parseVerifyResponse(response.choices?.[0]?.message?.content);
   } catch (err) {
-    const { message } = parseGeminiError(err);
+    const { message } = parseGroqError(err);
     console.warn('[selfVerification] verification call failed, treating as passed:', message);
     return { passed: true, issue: null };
   }

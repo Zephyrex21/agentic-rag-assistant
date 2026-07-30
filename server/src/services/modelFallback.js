@@ -1,44 +1,36 @@
 /**
- * Gemini's SDK sometimes throws with `.message` set to the RAW JSON error
- * body from the API (e.g. `{"error":{"code":404,"message":"...","status":"NOT_FOUND"}}`)
- * instead of a clean string. Left unhandled, that raw JSON ends up rendered
- * directly in the UI - not helpful for anyone. This extracts the actual
- * human-readable message underneath.
+ * Groq's SDK throws a typed APIError with a clean `.status` (HTTP code)
+ * and `.error` (the parsed JSON error body) - much cleaner than having to
+ * regex a JSON blob out of `.message` (which Gemini's SDK sometimes made
+ * necessary). This still defensively handles a couple of possible shapes
+ * for `.error` since the SDK types it loosely as `Object | undefined`.
  */
-function parseGeminiError(err) {
-  const raw = err?.message || String(err);
-  const jsonMatch = raw.match(/\{.*\}/s);
-  if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[0]);
-      if (parsed?.error?.message) {
-        return { message: parsed.error.message, code: parsed.error.code, status: parsed.error.status };
-      }
-    } catch {
-      // wasn't actually JSON, fall through to returning the raw message
-    }
-  }
-  return { message: raw, code: null, status: null };
+function parseGroqError(err) {
+  const status = err?.status ?? null;
+  const body = err?.error?.error ?? err?.error ?? null; // handle either nesting
+  const code = body?.code ?? null;
+  const message = body?.message ?? err?.message ?? String(err);
+  return { message, code, status };
 }
 
 /**
- * True for errors that mean "this specific model is gone/unavailable" as
- * opposed to a transient issue (rate limit, network blip) - only THIS
- * category should trigger a fallback-model retry. Google has deprecated
- * models earlier than their own announced shutdown dates more than once,
- * so this check matters in practice, not just in theory.
+ * True for errors that mean "this specific model is gone" (decommissioned/
+ * deprecated) as opposed to a transient issue (rate limit, network blip) -
+ * only THIS category should trigger a fallback-model retry. Groq returns
+ * HTTP 400 with code "model_decommissioned" for this (not 404 - a common
+ * assumption to get wrong if you're used to other providers).
  */
 function isModelUnavailableError(err) {
-  const { message, code, status } = parseGeminiError(err);
-  if (code === 404 || status === 'NOT_FOUND') return true;
-  return /no longer available|not found|model.*not.*exist/i.test(message);
+  const { message, code } = parseGroqError(err);
+  if (code === 'model_decommissioned' || code === 'model_not_found') return true;
+  return /decommissioned|no longer supported|does not exist/i.test(message || '');
 }
 
 /**
  * Runs an API call against a primary model, automatically retrying once
  * against a fallback model if the primary is unavailable (deprecated/
- * shut down). Both model names come from .env, so you can update either
- * without touching code the next time Google rotates something.
+ * decommissioned). Both model names come from .env, so you can update
+ * either without touching code the next time Groq retires something.
  *
  * @param {string} primaryModel
  * @param {string|undefined} fallbackModel
@@ -56,20 +48,40 @@ async function withModelFallback(primaryModel, fallbackModel, callFn) {
       try {
         return await callFn(fallbackModel);
       } catch (fallbackErr) {
-        const { message } = parseGeminiError(fallbackErr);
+        const { message } = parseGroqError(fallbackErr);
         throw new Error(`Both "${primaryModel}" and fallback "${fallbackModel}" failed: ${message}`);
       }
     }
-    const { message } = parseGeminiError(err);
+    const { message } = parseGroqError(err);
     throw new Error(message);
   }
 }
 
-// Models Google has cut off early/unreliably in the past, ahead of their
-// own announced shutdown dates. If a person's .env still explicitly pins
-// one of these (e.g. carried over from before this fix), warn loudly at
-// boot instead of waiting for the first failed request to surface it.
-const KNOWN_PROBLEMATIC_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+// Models Groq has decommissioned as of the most recent deprecation notices
+// (console.groq.com/docs/deprecations). If a person's .env still explicitly
+// pins one of these, warn loudly at boot instead of waiting for the first
+// failed request to surface it.
+const KNOWN_PROBLEMATIC_MODELS = [
+  'llama3-70b-8192',
+  'llama-3.1-70b-versatile',
+  'llama-3.3-70b-specdec',
+  'deepseek-r1-distill-llama-70b',
+  'llama-3.2-90b-vision-preview',
+  'llama-3.2-1b-preview',
+  'llama-guard-3-8b',
+  'gemma2-9b-it',
+  'gemma-7b-it',
+  'mixtral-8x7b-32768',
+  'mistral-saba-24b',
+  'qwen-qwq-32b',
+  'qwen/qwen3-32b',
+  'meta-llama/llama-4-maverick-17b-128e-instruct',
+  'meta-llama/llama-4-scout-17b-16e-instruct',
+  'meta-llama/llama-guard-4-12b',
+  'moonshotai/kimi-k2-instruct-0905',
+  'distil-whisper-large-v3-en',
+  'playai-tts',
+];
 
 /**
  * Checks a set of {envVarName: modelValue} pairs at startup and logs a
@@ -83,10 +95,10 @@ function checkForProblematicModels(configuredModels) {
   if (problems.length > 0) {
     console.warn('\n⚠️  Model configuration warning:');
     problems.forEach(([envVar, model]) => {
-      console.warn(`   ${envVar}=${model} - this model has had reliability issues (Google cut it off early for many users).`);
+      console.warn(`   ${envVar}=${model} - this model has been decommissioned by Groq.`);
     });
-    console.warn('   Consider updating your .env to gemini-3.5-flash / gemini-3.1-flash-lite instead.\n');
+    console.warn('   Check https://console.groq.com/docs/models for current recommendations.\n');
   }
 }
 
-module.exports = { parseGeminiError, isModelUnavailableError, withModelFallback, checkForProblematicModels, KNOWN_PROBLEMATIC_MODELS };
+module.exports = { parseGroqError, isModelUnavailableError, withModelFallback, checkForProblematicModels, KNOWN_PROBLEMATIC_MODELS };

@@ -1,20 +1,16 @@
-const { getClient } = require('./geminiClient');
-const { withModelFallback, parseGeminiError } = require('./modelFallback');
-const { buildGenerationConfig } = require('./thinkingConfig');
+const { getClient } = require('./groqClient');
+const { withModelFallback, parseGroqError } = require('./modelFallback');
 
-// gemini-3.5-flash: stable GA model, free tier eligible, no shutdown date
-// announced as of this writing. Previously defaulted to gemini-2.5-flash,
-// which Google began cutting off for many developers ahead of its own
-// announced shutdown date - see modelFallback.js for how we now handle
-// this class of problem automatically instead of needing a manual fix
-// every time Google rotates the model lineup.
-const MODEL = process.env.GENERATION_MODEL || 'gemini-3.5-flash';
-// Deliberately NOT gemini-2.5-flash - that's the model that just got cut off.
-// gemini-2.5-flash-lite was also reportedly affected by the same rollout, so
-// the fallback avoids the whole 2.5 line entirely and cross-pairs with a
-// SECOND independent stable model instead (see queryRewriter.js/reranker.js
-// for the reverse pairing).
-const FALLBACK_MODEL = process.env.GENERATION_MODEL_FALLBACK || 'gemini-3.1-flash-lite';
+// llama-3.3-70b-versatile: current production-tier model on Groq, free-tier
+// eligible, not on the deprecation list as of the most recent notices (see
+// modelFallback.js). Not a reasoning model - kept deliberately, since low
+// latency + grounded/concise answers matter more here than deep reasoning,
+// and Groq's free-tier rate limits reward staying on faster models.
+const MODEL = process.env.GENERATION_MODEL || 'llama-3.3-70b-versatile';
+// Cross-family fallback (Llama vs OpenAI's open-weight line) so a single
+// vendor-family issue doesn't take down both the primary and the fallback
+// at once - same philosophy as the old Gemini setup's cross-pairing.
+const FALLBACK_MODEL = process.env.GENERATION_MODEL_FALLBACK || 'openai/gpt-oss-120b';
 
 function buildPrompt(question, chunks, history = [], revision = null) {
   const context = chunks
@@ -59,21 +55,19 @@ ANSWER:`;
  * @returns {Promise<string>}
  */
 async function generateAnswer(question, chunks, history = [], revision = null) {
-  const ai = getClient('generation');
+  const client = getClient();
   const prompt = buildPrompt(question, chunks, history, revision);
 
   const response = await withModelFallback(MODEL, FALLBACK_MODEL, (model) =>
-    ai.models.generateContent({
+    client.chat.completions.create({
       model,
-      contents: prompt,
-      config: buildGenerationConfig(model, {
-        temperature: 0.2, // low temperature - we want grounded, consistent answers, not creative ones (ignored for gemini-3.x per Google's guidance)
-        maxOutputTokens: 1024,
-      }),
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.2, // low temperature - we want grounded, consistent answers, not creative ones
+      max_completion_tokens: 1024,
     })
   );
 
-  const text = response.text;
+  const text = response.choices?.[0]?.message?.content;
   if (!text) {
     throw new Error('Model returned an empty response.');
   }
@@ -94,7 +88,7 @@ async function generateAnswer(question, chunks, history = [], revision = null) {
  * @yields {string} text chunks as they arrive
  */
 async function* generateAnswerStream(question, chunks, history = [], revision = null) {
-  const ai = getClient('generation');
+  const client = getClient();
   const prompt = buildPrompt(question, chunks, history, revision);
 
   const modelsToTry = [MODEL, FALLBACK_MODEL].filter((m, i, arr) => m && arr.indexOf(m) === i);
@@ -105,16 +99,19 @@ async function* generateAnswerStream(question, chunks, history = [], revision = 
     // see whether any text was already sent to the client for this model.
     let yieldedAnything = false;
     try {
-      const stream = await ai.models.generateContentStream({
+      const stream = await client.chat.completions.create({
         model,
-        contents: prompt,
-        config: buildGenerationConfig(model, { temperature: 0.2, maxOutputTokens: 1024 }),
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2,
+        max_completion_tokens: 1024,
+        stream: true,
       });
 
       for await (const chunk of stream) {
-        if (chunk.text) {
+        const delta = chunk.choices?.[0]?.delta?.content;
+        if (delta) {
           yieldedAnything = true;
-          yield chunk.text;
+          yield delta;
         }
       }
 
@@ -124,7 +121,7 @@ async function* generateAnswerStream(question, chunks, history = [], revision = 
       return; // success - don't fall through to trying the next model
     } catch (err) {
       lastError = err;
-      const { message } = parseGeminiError(err);
+      const { message } = parseGroqError(err);
 
       // If we already streamed some text to the client for this model, we
       // can't cleanly retry with a fallback - the client would see a
@@ -139,7 +136,7 @@ async function* generateAnswerStream(question, chunks, history = [], revision = 
     }
   }
 
-  const { message } = parseGeminiError(lastError);
+  const { message } = parseGroqError(lastError);
   throw new Error(message);
 }
 

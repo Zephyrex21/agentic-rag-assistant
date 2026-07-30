@@ -2,7 +2,7 @@
 
 A full-stack retrieval-augmented generation system where every answer traces back to its exact source. Built to go beyond a basic "embed and search" wrapper — hybrid retrieval, LLM reranking, and query rewriting for follow-ups, wrapped in a real product UI with live streaming and verifiable citations.
 
-**Stack:** Node.js/Express · React (Vite) · TypeScript · Google Gemini · Pinecone · Supabase
+**Stack:** Node.js/Express · React (Vite) · TypeScript · Groq · Jina AI · Pinecone · Supabase
 
 ---
 
@@ -43,7 +43,7 @@ flowchart LR
 - Hybrid search fused with RRF, LLM reranking with a rescue safety net for broad/overview questions
 - Self-verification with a single visible revision pass — answers are checked against their own cited sources after generation
 - Streaming responses via Server-Sent Events — answers appear token-by-token
-- Multi-key Gemini distribution (separate keys for embedding/generation/utility calls, with automatic fallback if a model becomes unavailable)
+- Cross-family model fallback (generation/utility calls automatically retry on a different model family if the primary is decommissioned - see `modelFallback.js`)
 
 **Conversations**
 - Multi-turn memory backed by Supabase, with auto-titled threads
@@ -64,7 +64,8 @@ flowchart LR
 |---|---|
 | Backend | Node.js, Express |
 | Frontend | React, Vite, TypeScript, Tailwind CSS, Framer Motion |
-| LLM | Google Gemini (embeddings + generation + reranking/rewriting) |
+| LLM | Groq (generation + reranking/rewriting/verification) |
+| Embeddings | Jina AI (`jina-embeddings-v3`) |
 | Vector store | Pinecone |
 | Database | Supabase (Postgres) — documents, conversations, messages, full-text search index |
 | UI primitives | Radix UI, `cmdk` |
@@ -92,7 +93,7 @@ agentic-rag-assistant/
 ## Getting Started
 
 ### Prerequisites
-Free-tier accounts for [Google AI Studio](https://aistudio.google.com/apikey), [Pinecone](https://app.pinecone.io), and [Supabase](https://supabase.com) — no paid tier required.
+Free-tier accounts for [Groq](https://console.groq.com/keys) (no credit card required), [Jina AI](https://jina.ai/embeddings/), [Pinecone](https://app.pinecone.io), and [Supabase](https://supabase.com) — no paid tier required anywhere.
 
 ### 1. Supabase setup
 Run `server/supabase/schema.sql`, then `server/supabase/migration_002_hybrid_search.sql`, then `server/supabase/migration_003_self_verification.sql` in the Supabase SQL Editor.
@@ -123,7 +124,8 @@ All configuration lives in `server/.env` (see `.env.example` for the full list w
 
 | Variable | Purpose |
 |---|---|
-| `GEMINI_API_KEY_*` | Optional per-role key distribution (embedding/generation/utility) — falls back to a single `GEMINI_API_KEY` if unset |
+| `GROQ_API_KEY` | Single shared key for generation/reranking/rewriting/verification — Groq rate-limits per organization, not per key, so there's no benefit to splitting this |
+| `JINA_API_KEY` | Embeddings key — kept on a separate provider from Groq since Groq doesn't have a reliably documented embeddings API |
 | `ENABLE_HYBRID_SEARCH`, `ENABLE_RERANKING`, `ENABLE_QUERY_REWRITE`, `ENABLE_SELF_VERIFICATION` | Toggle any pipeline stage independently, no code changes needed |
 | `RETRIEVAL_TOP_K`, `RETRIEVAL_CANDIDATE_POOL` | Tune how many chunks are considered vs. sent to the model |
 | `GENERATION_MODEL_FALLBACK`, `UTILITY_MODEL_FALLBACK` | Automatic fallback models if a primary model is deprecated/unavailable |
@@ -140,7 +142,7 @@ All configuration lives in `server/.env` (see `.env.example` for the full list w
 | `/api/conversations` | POST/GET | Create or list conversation threads |
 | `/api/conversations/:id` | GET/DELETE | Fetch or delete a thread |
 | `/api/conversations/:id/messages` | POST | Ask a question in a thread, streamed via SSE |
-| `/health` | GET | Service status, key distribution, and active pipeline configuration |
+| `/health` | GET | Service status, configured providers, and active pipeline configuration |
 
 ## Testing
 
@@ -153,9 +155,13 @@ npm run test:rrf           # Reciprocal Rank Fusion logic
 npm run test:reranker      # reranker response parsing, including malformed model output
 npm run test:citations     # citation extraction from answer text
 npm run test:modelfallback # model deprecation fallback behavior
-npm run test:thinking      # thinking-token config per model family
 npm run test:verification  # self-verification response parsing, fail-open behavior
 npm run test:prompt        # prompt construction, with/without conversation history
+```
+
+To check your actual API keys against the live Groq and Jina APIs (this one does need real keys in `.env`):
+```bash
+npm run diagnose:keys
 ```
 
 ## Known Limitations
@@ -163,6 +169,7 @@ npm run test:prompt        # prompt construction, with/without conversation hist
 - Retrieval uses only the current question's embedding — conversation history informs *generation* (via query rewriting before retrieval) but isn't otherwise used to re-rank results
 - No authentication layer — not required for local/single-user use, would be needed before any public deployment
 - Documents uploaded before `migration_002_hybrid_search.sql` need re-uploading to benefit from hybrid search (their chunks predate the keyword-search index)
+- This project originally used Gemini for both embeddings and generation; it now uses Jina AI for embeddings and Groq for generation, after Gemini's newly-issued API keys started hitting a Google-side authentication rollout issue. If you have documents ingested under the old Gemini setup, **re-upload them** — Jina's embeddings live in a different vector space than Gemini's, so old vectors in Pinecone won't retrieve correctly against new Jina-embedded queries even though both happen to use 768 dimensions.
 
 ## Roadmap
 

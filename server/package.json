@@ -13,17 +13,16 @@
     "test:rrf": "node src/utils/test-rrf.js",
     "test:reranker": "node src/utils/test-reranker.js",
     "test:modelfallback": "node src/utils/test-modelfallback.js",
-    "test:thinking": "node src/utils/test-thinking.js",
     "test:verification": "node src/utils/test-verification.js",
-    "diagnose:gemini": "node src/utils/diagnose-gemini-key.js"
+    "diagnose:keys": "node src/utils/diagnose-api-keys.js"
   },
   "dependencies": {
-    "@google/genai": "^2.10.0",
     "@pinecone-database/pinecone": "^3.0.3",
     "@supabase/supabase-js": "^2.110.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "groq-sdk": "^1.4.1",
     "multer": "^2.0.0",
     "pdf-parse": "^1.1.1"
   },

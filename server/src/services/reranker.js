@@ -1,10 +1,9 @@
-const { getClient } = require('./geminiClient');
+const { getClient } = require('./groqClient');
 const { withModelFallback } = require('./modelFallback');
-const { buildGenerationConfig } = require('./thinkingConfig');
 
-const MODEL = process.env.UTILITY_MODEL || 'gemini-3.1-flash-lite';
+const MODEL = process.env.UTILITY_MODEL || 'llama-3.1-8b-instant';
 // Cross-paired with llm.js's default - see queryRewriter.js for the same reasoning.
-const FALLBACK_MODEL = process.env.UTILITY_MODEL_FALLBACK || 'gemini-3.5-flash';
+const FALLBACK_MODEL = process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-20b';
 
 // Reranker only needs enough text to judge relevance, not the full chunk -
 // full text is still used for the actual answer generation step afterward.
@@ -85,19 +84,17 @@ async function rerank(question, candidates, topK = 5) {
   if (candidates.length === 0) return [];
 
   try {
-    const ai = getClient('utility');
+    const client = getClient();
     const response = await withModelFallback(MODEL, FALLBACK_MODEL, (model) =>
-      ai.models.generateContent({
+      client.chat.completions.create({
         model,
-        contents: buildRerankPrompt(question, candidates),
-        config: buildGenerationConfig(model, {
-          temperature: 0, // determinism matters here (gemini-2.5.x only - omitted for gemini-3.x per Google's guidance)
-          maxOutputTokens: 150, // just a JSON array of numbers - headroom for thinking added automatically where needed
-        }),
+        messages: [{ role: 'user', content: buildRerankPrompt(question, candidates) }],
+        temperature: 0, // determinism matters here
+        max_completion_tokens: 150, // just a JSON array of numbers
       })
     );
 
-    return parseRerankResponse(response.text, candidates, topK);
+    return parseRerankResponse(response.choices?.[0]?.message?.content, candidates, topK);
   } catch (err) {
     console.warn('[reranker] rerank call failed, falling back to unranked top-K:', err.message);
     return candidates.slice(0, topK);
