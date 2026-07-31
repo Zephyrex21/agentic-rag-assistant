@@ -1,5 +1,6 @@
 const { getClient } = require('./groqClient');
-const { withModelFallback, parseGroqError } = require('./modelFallback');
+const { getClient: getCerebrasClient } = require('./cerebrasClient');
+const { withModelFallback, withProviderFallback, parseGroqError } = require('./modelFallback');
 
 // llama-3.3-70b-versatile: current production-tier model on Groq, free-tier
 // eligible, not on the deprecation list as of the most recent notices (see
@@ -11,6 +12,10 @@ const MODEL = process.env.GENERATION_MODEL || 'llama-3.3-70b-versatile';
 // vendor-family issue doesn't take down both the primary and the fallback
 // at once - same philosophy as the old Gemini setup's cross-pairing.
 const FALLBACK_MODEL = process.env.GENERATION_MODEL_FALLBACK || 'openai/gpt-oss-120b';
+// Same model family as MODEL, but on an entirely different provider - this
+// is the net that catches Groq itself being down/rate-limited, which
+// FALLBACK_MODEL above can't help with since it's still a Groq call.
+const CEREBRAS_FALLBACK_MODEL = process.env.CEREBRAS_FALLBACK_MODEL || 'llama-3.3-70b';
 
 function buildPrompt(question, chunks, history = [], revision = null) {
   const context = chunks
@@ -55,23 +60,39 @@ ANSWER:`;
  * @returns {Promise<string>}
  */
 async function generateAnswer(question, chunks, history = [], revision = null) {
-  const client = getClient();
   const prompt = buildPrompt(question, chunks, history, revision);
 
-  const response = await withModelFallback(MODEL, FALLBACK_MODEL, (model) =>
-    client.chat.completions.create({
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.2, // low temperature - we want grounded, consistent answers, not creative ones
-      max_completion_tokens: 1024,
-    })
-  );
+  const callGroq = async () => {
+    const client = getClient();
+    const response = await withModelFallback(MODEL, FALLBACK_MODEL, (model) =>
+      client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2, // low temperature - we want grounded, consistent answers, not creative ones
+        max_completion_tokens: 1024,
+      })
+    );
+    const text = response.choices?.[0]?.message?.content;
+    if (!text) throw new Error('Model returned an empty response.');
+    return text.trim();
+  };
 
-  const text = response.choices?.[0]?.message?.content;
-  if (!text) {
-    throw new Error('Model returned an empty response.');
-  }
-  return text.trim();
+  const cerebras = getCerebrasClient();
+  const callCerebras = cerebras
+    ? async () => {
+        const response = await cerebras.chat.completions.create({
+          model: CEREBRAS_FALLBACK_MODEL,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.2,
+          max_tokens: 1024,
+        });
+        const text = response.choices?.[0]?.message?.content;
+        if (!text) throw new Error('Cerebras returned an empty response.');
+        return text.trim();
+      }
+    : null;
+
+  return withProviderFallback(callGroq, callCerebras, 'Cerebras');
 }
 
 /**
@@ -90,22 +111,49 @@ async function generateAnswer(question, chunks, history = [], revision = null) {
 async function* generateAnswerStream(question, chunks, history = [], revision = null) {
   const client = getClient();
   const prompt = buildPrompt(question, chunks, history, revision);
+  const messages = [{ role: 'user', content: prompt }];
 
-  const modelsToTry = [MODEL, FALLBACK_MODEL].filter((m, i, arr) => m && arr.indexOf(m) === i);
+  // Ordered list of attempts: primary model, cross-family model fallback
+  // (both Groq), then Cerebras as the last resort if Groq itself is down -
+  // same one-list-of-attempts shape as the non-streaming version above,
+  // just adapted for the generator/yield style streaming needs.
+  const attempts = [MODEL, FALLBACK_MODEL]
+    .filter((m, i, arr) => m && arr.indexOf(m) === i)
+    .map((model) => ({
+      label: model,
+      createStream: () =>
+        client.chat.completions.create({
+          model,
+          messages,
+          temperature: 0.2,
+          max_completion_tokens: 1024,
+          stream: true,
+        }),
+    }));
+
+  const cerebras = getCerebrasClient();
+  if (cerebras) {
+    attempts.push({
+      label: `Cerebras/${CEREBRAS_FALLBACK_MODEL}`,
+      createStream: () =>
+        cerebras.chat.completions.create({
+          model: CEREBRAS_FALLBACK_MODEL,
+          messages,
+          temperature: 0.2,
+          max_tokens: 1024,
+          stream: true,
+        }),
+    });
+  }
+
   let lastError = null;
 
-  for (const model of modelsToTry) {
+  for (const { label, createStream } of attempts) {
     // Declared outside the try block so the catch handler below can still
-    // see whether any text was already sent to the client for this model.
+    // see whether any text was already sent to the client for this attempt.
     let yieldedAnything = false;
     try {
-      const stream = await client.chat.completions.create({
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.2,
-        max_completion_tokens: 1024,
-        stream: true,
-      });
+      const stream = await createStream();
 
       for await (const chunk of stream) {
         const delta = chunk.choices?.[0]?.delta?.content;
@@ -116,23 +164,23 @@ async function* generateAnswerStream(question, chunks, history = [], revision = 
       }
 
       if (!yieldedAnything) {
-        throw new Error('Model returned an empty streamed response.');
+        throw new Error(`"${label}" returned an empty streamed response.`);
       }
-      return; // success - don't fall through to trying the next model
+      return; // success - don't fall through to trying the next attempt
     } catch (err) {
       lastError = err;
       const { message } = parseGroqError(err);
 
-      // If we already streamed some text to the client for this model, we
+      // If we already streamed some text to the client for this attempt, we
       // can't cleanly retry with a fallback - the client would see a
       // confusing partial-then-restarted answer. Let the error propagate
-      // instead of silently continuing to the next model in the loop.
+      // instead of silently continuing to the next attempt in the loop.
       if (yieldedAnything) {
-        console.warn(`[llm] streaming with "${model}" failed mid-stream after chunks were already sent - not retrying: ${message}`);
+        console.warn(`[llm] streaming with "${label}" failed mid-stream after chunks were already sent - not retrying: ${message}`);
         throw new Error(message);
       }
 
-      console.warn(`[llm] streaming with "${model}" failed, ${model === modelsToTry[modelsToTry.length - 1] ? 'no more fallbacks' : 'trying fallback'}: ${message}`);
+      console.warn(`[llm] streaming with "${label}" failed, ${label === attempts[attempts.length - 1].label ? 'no more fallbacks' : 'trying next'}: ${message}`);
     }
   }
 

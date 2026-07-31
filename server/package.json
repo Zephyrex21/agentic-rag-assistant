@@ -17,6 +17,7 @@
     "diagnose:keys": "node src/utils/diagnose-api-keys.js"
   },
   "dependencies": {
+    "@cerebras/cerebras_cloud_sdk": "^1.91.0",
     "@pinecone-database/pinecone": "^3.0.3",
     "@supabase/supabase-js": "^2.110.2",
     "cors": "^2.8.5",

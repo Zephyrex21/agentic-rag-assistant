@@ -15,14 +15,16 @@ export function CitationBadge({ source }: { source: Source | undefined }) {
         <motion.button
           type="button"
           aria-label={`Show source ${source.sourceNumber}: ${source.filename}`}
-          whileHover={{ scale: 1.12, y: -1 }}
+          initial={{ rotate: -3 }}
+          whileHover={{ rotate: 0, scale: 1.08, y: -1 }}
           whileTap={{ scale: 0.95 }}
-          transition={{ type: 'spring', stiffness: 500, damping: 25 }}
-          className="mx-0.5 inline-flex h-5 min-w-5 translate-y-[-1px] items-center justify-center rounded-full px-1.5 font-mono text-[10px] font-semibold cursor-pointer"
+          transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+          className="mx-0.5 inline-flex h-5 min-w-5 translate-y-[-1px] items-center justify-center px-1.5 font-mono text-[10px] font-semibold cursor-pointer"
           style={{
-            background: 'linear-gradient(135deg, color-mix(in srgb, var(--highlight) 22%, transparent), color-mix(in srgb, var(--highlight-2) 14%, transparent))',
+            borderRadius: '3px',
+            background: 'color-mix(in srgb, var(--highlight) 10%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--highlight) 55%, transparent)',
             color: 'var(--highlight)',
-            boxShadow: '0 1px 3px -1px color-mix(in srgb, var(--highlight) 40%, transparent)',
           }}
         >
           {source.sourceNumber}

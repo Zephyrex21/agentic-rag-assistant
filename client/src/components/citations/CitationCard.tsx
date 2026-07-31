@@ -16,15 +16,20 @@ export function CitationCard({ source }: { source: Source }) {
     >
       <div className="flex items-start gap-2.5">
         <div
-          className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+          className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center"
           style={{
-            background: 'linear-gradient(135deg, color-mix(in srgb, var(--highlight) 22%, transparent), color-mix(in srgb, var(--highlight-2) 14%, transparent))',
+            borderRadius: '4px',
+            background: 'color-mix(in srgb, var(--highlight) 10%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--highlight) 40%, transparent)',
             color: 'var(--highlight)',
           }}
         >
           <FileText size={13} />
         </div>
         <div className="min-w-0 flex-1">
+          <p className="font-mono text-[10px] font-semibold uppercase tracking-wider text-highlight">
+            Source {source.sourceNumber}
+          </p>
           <p className="truncate text-sm font-medium text-ink">{source.filename}</p>
           {source.section && <p className="text-xs text-ink-muted">{source.section}</p>}
         </div>

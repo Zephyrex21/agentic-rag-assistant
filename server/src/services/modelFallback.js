@@ -101,4 +101,34 @@ function checkForProblematicModels(configuredModels) {
   }
 }
 
-module.exports = { parseGroqError, isModelUnavailableError, withModelFallback, checkForProblematicModels, KNOWN_PROBLEMATIC_MODELS };
+/**
+ * Provider-level fallback - distinct from withModelFallback above, and
+ * deliberately opposite in one respect: withModelFallback intentionally
+ * does NOT retry on transient errors (rate limits, network blips), only on
+ * confirmed model-unavailable errors. This function exists specifically
+ * to catch those transient/outage cases at the PROVIDER level - if Groq
+ * itself is having a bad day, retry the whole request against Cerebras
+ * rather than failing outright. This is what stops a single provider
+ * outage from taking the whole app down (the exact failure mode this
+ * project has already been burned by once).
+ *
+ * @param {() => Promise<any>} primaryFn - the Groq call
+ * @param {(() => Promise<any>)|null} fallbackFn - the Cerebras call, or
+ *   null if no fallback is configured (e.g. CEREBRAS_API_KEY unset)
+ * @param {string} fallbackLabel - for logging
+ */
+async function withProviderFallback(primaryFn, fallbackFn, fallbackLabel = 'fallback provider') {
+  try {
+    return await primaryFn();
+  } catch (primaryErr) {
+    if (!fallbackFn) throw primaryErr;
+    console.warn(`[providerFallback] Groq call failed entirely, retrying via ${fallbackLabel}: ${primaryErr.message}`);
+    try {
+      return await fallbackFn();
+    } catch (fallbackErr) {
+      throw new Error(`Both Groq and ${fallbackLabel} failed. Groq: ${primaryErr.message} | ${fallbackLabel}: ${fallbackErr.message}`);
+    }
+  }
+}
+
+module.exports = { parseGroqError, isModelUnavailableError, withModelFallback, withProviderFallback, checkForProblematicModels, KNOWN_PROBLEMATIC_MODELS };

@@ -77,9 +77,36 @@ async function testJina() {
   }
 }
 
+async function testCerebras() {
+  console.log('\n--- Cerebras (optional provider fallback) ---');
+  const apiKey = process.env.CEREBRAS_API_KEY;
+  console.log(`  CEREBRAS_API_KEY = ${mask(apiKey)}`);
+  if (!apiKey) {
+    console.log('  Not set - this is optional. Skipped (the app works fine without it; Groq alone is the primary path).');
+    return;
+  }
+  try {
+    const Cerebras = require('@cerebras/cerebras_cloud_sdk');
+    const client = new Cerebras({ apiKey });
+    const model = process.env.CEREBRAS_FALLBACK_MODEL || 'llama-3.3-70b';
+    const res = await client.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: 'Reply with exactly one word: OK' }],
+      max_tokens: 10,
+    });
+    const text = res.choices?.[0]?.message?.content?.trim();
+    console.log(`  \u2705 SUCCESS - "${model}" responded: "${text}"`);
+  } catch (err) {
+    console.log('  \u274c FAILED');
+    console.log(`     message: ${err.message}`);
+    if (err.status !== undefined) console.log(`     status:  ${err.status}`);
+  }
+}
+
 (async () => {
-  console.log('=== Groq + Jina API Diagnostic ===');
+  console.log('=== Groq + Jina + Cerebras API Diagnostic ===');
   await testGroq();
   await testJina();
+  await testCerebras();
   console.log('\nDone.');
 })();
