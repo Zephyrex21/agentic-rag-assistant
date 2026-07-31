@@ -88,7 +88,7 @@ async function testCerebras() {
   try {
     const Cerebras = require('@cerebras/cerebras_cloud_sdk');
     const client = new Cerebras({ apiKey });
-    const model = process.env.CEREBRAS_FALLBACK_MODEL || 'llama-3.3-70b';
+    const model = process.env.CEREBRAS_FALLBACK_MODEL || 'gpt-oss-120b';
     const res = await client.chat.completions.create({
       model,
       messages: [{ role: 'user', content: 'Reply with exactly one word: OK' }],

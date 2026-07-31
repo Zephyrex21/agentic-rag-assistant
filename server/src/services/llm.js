@@ -12,10 +12,13 @@ const MODEL = process.env.GENERATION_MODEL || 'llama-3.3-70b-versatile';
 // vendor-family issue doesn't take down both the primary and the fallback
 // at once - same philosophy as the old Gemini setup's cross-pairing.
 const FALLBACK_MODEL = process.env.GENERATION_MODEL_FALLBACK || 'openai/gpt-oss-120b';
-// Same model family as MODEL, but on an entirely different provider - this
-// is the net that catches Groq itself being down/rate-limited, which
-// FALLBACK_MODEL above can't help with since it's still a Groq call.
-const CEREBRAS_FALLBACK_MODEL = process.env.CEREBRAS_FALLBACK_MODEL || 'llama-3.3-70b';
+// A different model family than MODEL (Cerebras's free public catalog is
+// deliberately small - gpt-oss-120b is the current production-tier option
+// there, see https://inference-docs.cerebras.ai/models/overview), but on
+// an entirely different PROVIDER - this is the net that catches Groq
+// itself being down/rate-limited, which FALLBACK_MODEL above can't help
+// with since it's still a Groq call.
+const CEREBRAS_FALLBACK_MODEL = process.env.CEREBRAS_FALLBACK_MODEL || 'gpt-oss-120b';
 
 function buildPrompt(question, chunks, history = [], revision = null) {
   const context = chunks

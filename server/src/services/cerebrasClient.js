@@ -5,9 +5,10 @@ const Cerebras = require('@cerebras/cerebras_cloud_sdk');
  * withProviderFallback in modelFallback.js), not a primary path. If Groq
  * itself is down, rate-limited, or otherwise unreachable - not just a
  * single decommissioned model - this is what keeps answers flowing instead
- * of the whole app going dark. Genuinely free tier, OpenAI-compatible API,
- * same Llama model family already used on Groq so answer quality/style
- * stays consistent when it kicks in.
+ * of the whole app going dark. Genuinely free tier, OpenAI-compatible API -
+ * see llm.js for which model is used there (Cerebras's free public catalog
+ * is deliberately small, check https://inference-docs.cerebras.ai/models/overview
+ * before changing it).
  *
  * This is optional: if CEREBRAS_API_KEY is unset, provider fallback is
  * simply skipped and the app behaves as it did before this was added.
