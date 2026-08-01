@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FileText, Loader2, CheckCircle2, AlertCircle, Trash2, Upload } from 'lucide-react';
 import { useDocuments } from '../../context/DocumentsContext';
@@ -11,6 +11,14 @@ export function DocumentsPanel() {
   const { documents, loading, uploadError, upload, remove } = useDocuments();
   const [dragActive, setDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Frozen at first render - lets rows stagger in once on initial load,
+  // without re-triggering that stagger every time the panel re-renders for
+  // unrelated reasons (only a genuinely NEW row added later should use the
+  // plain add/remove transition, not a full re-stagger of the whole list).
+  const isFirstMount = useRef(true);
+  useEffect(() => {
+    if (!loading) isFirstMount.current = false;
+  }, [loading]);
 
   const handleFiles = useCallback(
     (files: FileList | null) => {
@@ -69,8 +77,8 @@ export function DocumentsPanel() {
           <p className="px-1 text-xs text-ink-muted">No documents yet. Upload one to get started.</p>
         )}
         <AnimatePresence initial={false}>
-          {documents.map((doc) => (
-            <DocumentRow key={doc.id} doc={doc} onRemove={remove} />
+          {documents.map((doc, i) => (
+            <DocumentRow key={doc.id} doc={doc} onRemove={remove} delay={isFirstMount.current ? i * 0.05 : 0} />
           ))}
         </AnimatePresence>
       </div>
@@ -78,16 +86,24 @@ export function DocumentsPanel() {
   );
 }
 
-function DocumentRow({ doc, onRemove }: { doc: DocumentSummary; onRemove: (id: string) => void }) {
+function DocumentRow({
+  doc,
+  onRemove,
+  delay = 0,
+}: {
+  doc: DocumentSummary;
+  onRemove: (id: string) => void;
+  delay?: number;
+}) {
   const [confirming, setConfirming] = useState(false);
 
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, height: 0 }}
-      animate={{ opacity: 1, height: 'auto' }}
+      initial={{ opacity: 0, height: 0, x: -8 }}
+      animate={{ opacity: 1, height: 'auto', x: 0 }}
       exit={{ opacity: 0, height: 0 }}
-      transition={{ duration: 0.2 }}
+      transition={{ duration: 0.24, delay, ease: [0.16, 1, 0.3, 1] }}
       className="elevation-hover group flex items-center gap-2.5 rounded-xl px-2.5 py-2 hover:bg-background"
     >
       <FileText size={15} className="shrink-0 text-ink-muted" />

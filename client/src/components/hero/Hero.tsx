@@ -1,4 +1,5 @@
-import { motion, useReducedMotion, type Variants } from 'framer-motion';
+import { motion, useReducedMotion, useMotionValue, useSpring, useTransform, type Variants } from 'framer-motion';
+import { useEffect } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { ThemeToggle } from '../ThemeToggle';
 import { LogoMark } from '../LogoMark';
@@ -15,8 +16,65 @@ const item: Variants = {
   show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.16, 1, 0.3, 1] } },
 };
 
+/** Small floating tags echoing the citation-stamp motif used throughout the
+ * app - the landing page's signature element should match the product's,
+ * not just be generic decoration. Each drifts independently and very
+ * slowly; positions are spread out so they read as ambient atmosphere,
+ * not competing with the headline for attention. */
+function FloatingStamp({
+  label,
+  className,
+  delay,
+  duration,
+}: {
+  label: string;
+  className: string;
+  delay: number;
+  duration: number;
+}) {
+  return (
+    <motion.div
+      className={`pointer-events-none absolute hidden select-none items-center justify-center rounded-[3px] px-2 py-1 font-mono text-[10px] font-semibold sm:flex ${className}`}
+      style={{
+        background: 'color-mix(in srgb, var(--highlight) 8%, transparent)',
+        border: '1px solid color-mix(in srgb, var(--highlight) 35%, transparent)',
+        color: 'var(--highlight)',
+      }}
+      initial={{ opacity: 0, scale: 0.6, rotate: -12 }}
+      animate={{
+        opacity: [0, 0.8, 0.8, 0],
+        scale: 1,
+        rotate: [-12, -6, -12],
+        y: [0, -14, 0],
+      }}
+      transition={{ opacity: { duration, delay, repeat: Infinity, ease: 'easeInOut' }, scale: { duration: 0.5, delay }, rotate: { duration, delay, repeat: Infinity, ease: 'easeInOut' }, y: { duration, delay, repeat: Infinity, ease: 'easeInOut' } }}
+    >
+      {label}
+    </motion.div>
+  );
+}
+
 export function Hero({ onEnter }: { onEnter: () => void }) {
   const reduceMotion = useReducedMotion();
+
+  // Cursor-parallax on the ambient orb - subtle depth cue, disabled
+  // entirely under reduced-motion rather than just skipping the spring.
+  const mouseX = useMotionValue(0);
+  const mouseY = useMotionValue(0);
+  const springX = useSpring(mouseX, { stiffness: 40, damping: 20 });
+  const springY = useSpring(mouseY, { stiffness: 40, damping: 20 });
+  const orbX = useTransform(springX, [-0.5, 0.5], ['-4%', '4%']);
+  const orbY = useTransform(springY, [-0.5, 0.5], ['-4%', '4%']);
+
+  useEffect(() => {
+    if (reduceMotion) return;
+    const handleMove = (e: MouseEvent) => {
+      mouseX.set(e.clientX / window.innerWidth - 0.5);
+      mouseY.set(e.clientY / window.innerHeight - 0.5);
+    };
+    window.addEventListener('mousemove', handleMove);
+    return () => window.removeEventListener('mousemove', handleMove);
+  }, [reduceMotion, mouseX, mouseY]);
 
   return (
     <div className="relative flex min-h-svh flex-col overflow-hidden">
@@ -26,6 +84,8 @@ export function Hero({ onEnter }: { onEnter: () => void }) {
           className="absolute left-1/2 top-1/2 h-[38rem] w-[38rem] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-[0.18] blur-[110px]"
           style={{
             background: 'radial-gradient(circle, var(--accent) 0%, var(--highlight) 55%, transparent 75%)',
+            x: reduceMotion ? 0 : orbX,
+            y: reduceMotion ? 0 : orbY,
           }}
           animate={
             reduceMotion
@@ -35,6 +95,14 @@ export function Hero({ onEnter }: { onEnter: () => void }) {
           transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut' }}
         />
       </div>
+
+      {!reduceMotion && (
+        <>
+          <FloatingStamp label="1" className="left-[12%] top-[28%]" delay={0} duration={9} />
+          <FloatingStamp label="2" className="right-[14%] top-[38%]" delay={1.4} duration={11} />
+          <FloatingStamp label="3" className="left-[18%] bottom-[24%]" delay={2.8} duration={10} />
+        </>
+      )}
 
       <header className="relative z-10 flex items-center justify-between px-6 py-6 sm:px-10">
         <span className="flex items-center gap-2 font-mono text-xs uppercase tracking-[0.2em] text-ink-muted">

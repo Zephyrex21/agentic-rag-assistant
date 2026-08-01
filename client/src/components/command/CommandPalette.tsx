@@ -10,6 +10,23 @@ interface CommandPaletteProps {
   onNavigateToDocuments: () => void;
 }
 
+/** Animates an item's inner content only - Command.Item itself stays a
+ * plain, unwrapped cmdk element so keyboard navigation and selection state
+ * (data-selected) keep working exactly as cmdk expects. Capped stagger so
+ * a long conversation list doesn't take forever to finish appearing. */
+function StaggerRow({ i, children }: { i: number; children: React.ReactNode }) {
+  return (
+    <motion.span
+      initial={{ opacity: 0, x: -6 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: Math.min(i, 10) * 0.025, duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+      className="flex items-center gap-2.5"
+    >
+      {children}
+    </motion.span>
+  );
+}
+
 export function CommandPalette({ onNavigateToDocuments }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
   const { conversations, createConversation, selectConversation } = useConversations();
@@ -80,36 +97,44 @@ export function CommandPalette({ onNavigateToDocuments }: CommandPaletteProps) {
                         onSelect={() => run(() => createConversation())}
                         className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-ink data-[selected=true]:bg-background cursor-pointer"
                       >
-                        <MessageSquarePlus size={15} className="text-accent" />
-                        New conversation
+                        <StaggerRow i={0}>
+                          <MessageSquarePlus size={15} className="text-accent" />
+                          New conversation
+                        </StaggerRow>
                       </Command.Item>
                       <Command.Item
                         onSelect={() => run(onNavigateToDocuments)}
                         className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-ink data-[selected=true]:bg-background cursor-pointer"
                       >
-                        <FileText size={15} className="text-accent" />
-                        Go to documents
+                        <StaggerRow i={1}>
+                          <FileText size={15} className="text-accent" />
+                          Go to documents
+                        </StaggerRow>
                       </Command.Item>
                       <Command.Item
                         onSelect={() => run(toggleTheme)}
                         className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-ink data-[selected=true]:bg-background cursor-pointer"
                       >
-                        {theme === 'dark' ? <Sun size={15} className="text-accent" /> : <Moon size={15} className="text-accent" />}
-                        Switch to {theme === 'dark' ? 'light' : 'dark'} mode
+                        <StaggerRow i={2}>
+                          {theme === 'dark' ? <Sun size={15} className="text-accent" /> : <Moon size={15} className="text-accent" />}
+                          Switch to {theme === 'dark' ? 'light' : 'dark'} mode
+                        </StaggerRow>
                       </Command.Item>
                     </Command.Group>
 
                     {conversations.length > 0 && (
                       <Command.Group heading="Conversations" className="cmdk-group">
-                        {conversations.map((c) => (
+                        {conversations.map((c, i) => (
                           <Command.Item
                             key={c.id}
                             value={c.title}
                             onSelect={() => run(() => selectConversation(c.id))}
                             className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-ink data-[selected=true]:bg-background cursor-pointer"
                           >
-                            <MessageSquare size={15} className="shrink-0 text-ink-muted" />
-                            <span className="truncate">{c.title}</span>
+                            <StaggerRow i={3 + i}>
+                              <MessageSquare size={15} className="shrink-0 text-ink-muted" />
+                              <span className="truncate">{c.title}</span>
+                            </StaggerRow>
                           </Command.Item>
                         ))}
                       </Command.Group>

@@ -1,6 +1,6 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { MessageSquare, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useConversations } from '../../context/ConversationsContext';
 import { ConversationRowSkeleton } from '../ui/Skeleton';
 
@@ -12,6 +12,14 @@ export function ConversationsPanel() {
     selectConversation,
     deleteConversation,
   } = useConversations();
+
+  // Frozen the same way as DocumentsPanel's - flips only once real data has
+  // arrived (not on the raw first render, which happens before the async
+  // fetch resolves), so the stagger fires exactly once on genuine first load.
+  const isFirstMount = useRef(true);
+  useEffect(() => {
+    if (!conversationsLoading) isFirstMount.current = false;
+  }, [conversationsLoading]);
 
   if (conversationsLoading) {
     return (
@@ -30,13 +38,14 @@ export function ConversationsPanel() {
   return (
     <div className="flex flex-col gap-1">
       <AnimatePresence initial={false}>
-        {conversations.map((c) => (
+        {conversations.map((c, i) => (
           <ConversationRow
             key={c.id}
             title={c.title}
             active={c.id === activeConversationId}
             onSelect={() => selectConversation(c.id)}
             onDelete={() => deleteConversation(c.id)}
+            delay={isFirstMount.current ? i * 0.04 : 0}
           />
         ))}
       </AnimatePresence>
@@ -49,21 +58,23 @@ function ConversationRow({
   active,
   onSelect,
   onDelete,
+  delay = 0,
 }: {
   title: string;
   active: boolean;
   onSelect: () => void;
   onDelete: () => void;
+  delay?: number;
 }) {
   const [confirming, setConfirming] = useState(false);
 
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, height: 0 }}
-      animate={{ opacity: 1, height: 'auto' }}
+      initial={{ opacity: 0, height: 0, x: -8 }}
+      animate={{ opacity: 1, height: 'auto', x: 0 }}
       exit={{ opacity: 0, height: 0 }}
-      transition={{ duration: 0.2 }}
+      transition={{ duration: 0.24, delay, ease: [0.16, 1, 0.3, 1] }}
       className="relative"
     >
       <button
