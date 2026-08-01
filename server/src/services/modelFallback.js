@@ -107,14 +107,16 @@ function checkForProblematicModels(configuredModels) {
  * does NOT retry on transient errors (rate limits, network blips), only on
  * confirmed model-unavailable errors. This function exists specifically
  * to catch those transient/outage cases at the PROVIDER level - if Groq
- * itself is having a bad day, retry the whole request against Cerebras
- * rather than failing outright. This is what stops a single provider
- * outage from taking the whole app down (the exact failure mode this
- * project has already been burned by once).
+ * itself is having a bad day, retry the whole request against a different
+ * provider entirely (currently Mistral, see llm.js) rather than failing
+ * outright. This is what stops a single provider outage from taking the
+ * whole app down (the exact failure mode this project has already been
+ * burned by twice - once with Gemini's key rollout, once with a fallback
+ * provider's free-tier terms changing without warning).
  *
  * @param {() => Promise<any>} primaryFn - the Groq call
- * @param {(() => Promise<any>)|null} fallbackFn - the Cerebras call, or
- *   null if no fallback is configured (e.g. CEREBRAS_API_KEY unset)
+ * @param {(() => Promise<any>)|null} fallbackFn - the fallback provider's
+ *   call, or null if no fallback is configured (e.g. its API key unset)
  * @param {string} fallbackLabel - for logging
  */
 async function withProviderFallback(primaryFn, fallbackFn, fallbackLabel = 'fallback provider') {

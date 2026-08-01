@@ -1,5 +1,5 @@
 const { getClient } = require('./groqClient');
-const { getClient: getCerebrasClient } = require('./cerebrasClient');
+const { getClient: getMistralClient } = require('./mistralClient');
 const { withModelFallback, withProviderFallback, parseGroqError } = require('./modelFallback');
 
 // llama-3.3-70b-versatile: current production-tier model on Groq, free-tier
@@ -12,13 +12,11 @@ const MODEL = process.env.GENERATION_MODEL || 'llama-3.3-70b-versatile';
 // vendor-family issue doesn't take down both the primary and the fallback
 // at once - same philosophy as the old Gemini setup's cross-pairing.
 const FALLBACK_MODEL = process.env.GENERATION_MODEL_FALLBACK || 'openai/gpt-oss-120b';
-// A different model family than MODEL (Cerebras's free public catalog is
-// deliberately small - gpt-oss-120b is the current production-tier option
-// there, see https://inference-docs.cerebras.ai/models/overview), but on
-// an entirely different PROVIDER - this is the net that catches Groq
-// itself being down/rate-limited, which FALLBACK_MODEL above can't help
-// with since it's still a Groq call.
-const CEREBRAS_FALLBACK_MODEL = process.env.CEREBRAS_FALLBACK_MODEL || 'gpt-oss-120b';
+// A different provider entirely (see mistralClient.js for why Mistral) -
+// this is the net that catches Groq itself being down/rate-limited, which
+// FALLBACK_MODEL above can't help with since it's still a Groq call.
+// "-latest" alias so this doesn't go stale the way a pinned version could.
+const MISTRAL_FALLBACK_MODEL = process.env.MISTRAL_FALLBACK_MODEL || 'mistral-large-latest';
 
 function buildPrompt(question, chunks, history = [], revision = null) {
   const context = chunks
@@ -80,22 +78,22 @@ async function generateAnswer(question, chunks, history = [], revision = null) {
     return text.trim();
   };
 
-  const cerebras = getCerebrasClient();
-  const callCerebras = cerebras
+  const mistral = getMistralClient();
+  const callMistral = mistral
     ? async () => {
-        const response = await cerebras.chat.completions.create({
-          model: CEREBRAS_FALLBACK_MODEL,
+        const response = await mistral.chat.completions.create({
+          model: MISTRAL_FALLBACK_MODEL,
           messages: [{ role: 'user', content: prompt }],
           temperature: 0.2,
           max_tokens: 1024,
         });
         const text = response.choices?.[0]?.message?.content;
-        if (!text) throw new Error('Cerebras returned an empty response.');
+        if (!text) throw new Error('Mistral returned an empty response.');
         return text.trim();
       }
     : null;
 
-  return withProviderFallback(callGroq, callCerebras, 'Cerebras');
+  return withProviderFallback(callGroq, callMistral, 'Mistral');
 }
 
 /**
@@ -117,7 +115,7 @@ async function* generateAnswerStream(question, chunks, history = [], revision = 
   const messages = [{ role: 'user', content: prompt }];
 
   // Ordered list of attempts: primary model, cross-family model fallback
-  // (both Groq), then Cerebras as the last resort if Groq itself is down -
+  // (both Groq), then Mistral as the last resort if Groq itself is down -
   // same one-list-of-attempts shape as the non-streaming version above,
   // just adapted for the generator/yield style streaming needs.
   const attempts = [MODEL, FALLBACK_MODEL]
@@ -134,13 +132,13 @@ async function* generateAnswerStream(question, chunks, history = [], revision = 
         }),
     }));
 
-  const cerebras = getCerebrasClient();
-  if (cerebras) {
+  const mistral = getMistralClient();
+  if (mistral) {
     attempts.push({
-      label: `Cerebras/${CEREBRAS_FALLBACK_MODEL}`,
+      label: `Mistral/${MISTRAL_FALLBACK_MODEL}`,
       createStream: () =>
-        cerebras.chat.completions.create({
-          model: CEREBRAS_FALLBACK_MODEL,
+        mistral.chat.completions.create({
+          model: MISTRAL_FALLBACK_MODEL,
           messages,
           temperature: 0.2,
           max_tokens: 1024,

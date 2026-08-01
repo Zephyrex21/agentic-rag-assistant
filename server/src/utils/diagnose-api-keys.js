@@ -77,18 +77,18 @@ async function testJina() {
   }
 }
 
-async function testCerebras() {
-  console.log('\n--- Cerebras (optional provider fallback) ---');
-  const apiKey = process.env.CEREBRAS_API_KEY;
-  console.log(`  CEREBRAS_API_KEY = ${mask(apiKey)}`);
+async function testMistral() {
+  console.log('\n--- Mistral AI (optional provider fallback) ---');
+  const apiKey = process.env.MISTRAL_API_KEY;
+  console.log(`  MISTRAL_API_KEY = ${mask(apiKey)}`);
   if (!apiKey) {
     console.log('  Not set - this is optional. Skipped (the app works fine without it; Groq alone is the primary path).');
     return;
   }
   try {
-    const Cerebras = require('@cerebras/cerebras_cloud_sdk');
-    const client = new Cerebras({ apiKey });
-    const model = process.env.CEREBRAS_FALLBACK_MODEL || 'gpt-oss-120b';
+    const OpenAI = require('openai');
+    const client = new OpenAI({ apiKey, baseURL: 'https://api.mistral.ai/v1' });
+    const model = process.env.MISTRAL_FALLBACK_MODEL || 'mistral-large-latest';
     const res = await client.chat.completions.create({
       model,
       messages: [{ role: 'user', content: 'Reply with exactly one word: OK' }],
@@ -104,9 +104,9 @@ async function testCerebras() {
 }
 
 (async () => {
-  console.log('=== Groq + Jina + Cerebras API Diagnostic ===');
+  console.log('=== Groq + Jina + Mistral API Diagnostic ===');
   await testGroq();
   await testJina();
-  await testCerebras();
+  await testMistral();
   console.log('\nDone.');
 })();
