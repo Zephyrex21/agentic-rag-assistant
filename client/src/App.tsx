@@ -12,6 +12,7 @@ import { DocumentsPanel } from './components/documents/DocumentsPanel';
 import { ChatPanel } from './components/chat/ChatPanel';
 import { CommandPalette } from './components/command/CommandPalette';
 import { GrainOverlay } from './components/GrainOverlay';
+import { AmbientBackground } from './components/AmbientBackground';
 
 type View = 'hero' | 'app';
 
@@ -58,6 +59,7 @@ function App() {
       <ThemeProvider>
         <DocumentsProvider>
           <ConversationsProvider>
+            <AmbientBackground />
             <GrainOverlay />
             <AppContent />
           </ConversationsProvider>

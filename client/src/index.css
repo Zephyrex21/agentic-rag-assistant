@@ -104,6 +104,35 @@
   --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", monospace;
 }
 
+/* Ambient background drift - two large, very soft blobs slowly wandering
+   independently. Pure CSS (not JS/Framer) so it costs almost nothing and
+   never touches React's render cycle. Kept slow (40-55s loops) and
+   low-opacity - the point is a barely-conscious sense of depth/life
+   behind the content, not a visible animation anyone would consciously
+   watch. Respects prefers-reduced-motion (see the media query below). */
+@keyframes drift-a {
+  0%, 100% { transform: translate(-8%, -6%) scale(1); }
+  33% { transform: translate(6%, 8%) scale(1.15); }
+  66% { transform: translate(-4%, 10%) scale(0.9); }
+}
+@keyframes drift-b {
+  0%, 100% { transform: translate(6%, 8%) scale(1); }
+  50% { transform: translate(-10%, -8%) scale(1.2); }
+}
+@keyframes stamp-in {
+  0% { opacity: 0; transform: scale(1.6) rotate(-14deg); }
+  60% { opacity: 1; transform: scale(0.94) rotate(2deg); }
+  100% { opacity: 1; transform: scale(1) rotate(-3deg); }
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ambient-blob { animation: none !important; }
+  .citation-stamp-in { animation: none !important; }
+}
+
 * {
   box-sizing: border-box;
 }

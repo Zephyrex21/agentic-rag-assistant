@@ -11,7 +11,7 @@ export function AppShell({ sidebar, main }: AppShellProps) {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   return (
-    <div className="flex h-svh w-full overflow-hidden bg-background">
+    <div className="relative flex h-svh w-full overflow-hidden">
       {/* Desktop sidebar - always visible, static */}
       <aside
         className="hidden w-80 shrink-0 border-r border-border-subtle md:block"

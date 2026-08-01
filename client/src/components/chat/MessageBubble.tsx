@@ -98,7 +98,11 @@ function SearchingIndicator() {
 
 function RevisingIndicator() {
   return (
-    <div className="flex items-center gap-2 text-sm text-highlight">
+    <motion.div
+      className="flex items-center gap-2 text-sm text-highlight"
+      animate={{ opacity: [0.7, 1, 0.7] }}
+      transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
+    >
       <motion.span
         animate={{ rotate: 360 }}
         transition={{ duration: 1.2, repeat: Infinity, ease: 'linear' }}
@@ -107,7 +111,7 @@ function RevisingIndicator() {
         <RotateCcw size={13} />
       </motion.span>
       <span>Double-checking this answer against the sources...</span>
-    </div>
+    </motion.div>
   );
 }
 
@@ -133,18 +137,34 @@ function VerificationBadge({ verified, wasRevised }: { verified?: boolean; wasRe
 
   if (verified) {
     return (
-      <span className="flex items-center gap-1 text-xs text-accent">
-        <ShieldCheck size={12} />
+      <motion.span
+        initial={{ opacity: 0, scale: 0.7, y: 4 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+        className="flex items-center gap-1 text-xs text-accent"
+      >
+        <motion.span
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          transition={{ delay: 0.15, type: 'spring', stiffness: 500, damping: 15 }}
+        >
+          <ShieldCheck size={12} />
+        </motion.span>
         Revised for accuracy
-      </span>
+      </motion.span>
     );
   }
 
   return (
-    <span className="flex items-center gap-1 text-xs text-highlight">
+    <motion.span
+      initial={{ opacity: 0, scale: 0.7, y: 4 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+      className="flex items-center gap-1 text-xs text-highlight"
+    >
       <ShieldAlert size={12} />
       May not be fully supported by the sources
-    </span>
+    </motion.span>
   );
 }
 
@@ -154,7 +174,7 @@ function SourcesSummary({ citedCount, uncited }: { citedCount: number; uncited: 
   if (citedCount === 0 && uncitedList.length === 0) return null;
 
   return (
-    <div>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -166,17 +186,27 @@ function SourcesSummary({ citedCount, uncited }: { citedCount: number; uncited: 
           <>
             {citedCount > 0 && <span>·</span>}
             <span>{uncitedList.length} more considered</span>
-            <ChevronDown size={11} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+            <motion.span animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.2 }} className="flex">
+              <ChevronDown size={11} />
+            </motion.span>
           </>
         )}
       </button>
-      {open && uncitedList.length > 0 && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-1">
-          {uncitedList.map((s) => (
-            <CitationBadge key={s.sourceNumber} source={s} />
-          ))}
-        </div>
-      )}
-    </div>
+      <AnimatePresence>
+        {open && uncitedList.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            className="mt-1.5 flex flex-wrap items-center gap-1 overflow-hidden"
+          >
+            {uncitedList.map((s) => (
+              <CitationBadge key={s.sourceNumber} source={s} />
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   );
 }

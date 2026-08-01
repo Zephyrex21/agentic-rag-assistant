@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { MessageSquare, FileText } from 'lucide-react';
 import { ThemeToggle } from '../ThemeToggle';
 import { LogoMark } from '../LogoMark';
@@ -42,7 +42,17 @@ export function Sidebar({ chatsSlot, documentsSlot, newConversationSlot, tab, on
       </div>
 
       <div className="mt-3 flex-1 overflow-y-auto px-3 pb-4">
-        {tab === 'chats' ? chatsSlot : documentsSlot}
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0, x: tab === 'chats' ? -8 : 8 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: tab === 'chats' ? 8 : -8 }}
+            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+          >
+            {tab === 'chats' ? chatsSlot : documentsSlot}
+          </motion.div>
+        </AnimatePresence>
       </div>
     </div>
   );

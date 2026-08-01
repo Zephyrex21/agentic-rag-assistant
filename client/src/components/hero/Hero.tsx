@@ -19,7 +19,7 @@ export function Hero({ onEnter }: { onEnter: () => void }) {
   const reduceMotion = useReducedMotion();
 
   return (
-    <div className="relative flex min-h-svh flex-col overflow-hidden bg-background">
+    <div className="relative flex min-h-svh flex-col overflow-hidden">
       {/* Ambient breathing gradient orb - the "thinking" motif, kept subtle */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <motion.div
