@@ -2,6 +2,7 @@ import type {
   ConversationDetail,
   ConversationSummary,
   DocumentSummary,
+  Folder,
   Message,
   Source,
 } from './types';
@@ -33,9 +34,13 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 // ---------- Documents ----------
 
-export async function uploadDocument(file: File): Promise<{ documentId: string; filename: string; status: string }> {
+export async function uploadDocument(
+  file: File,
+  folderId?: string | null
+): Promise<{ documentId: string; filename: string; status: string }> {
   const formData = new FormData();
   formData.append('file', file);
+  if (folderId) formData.append('folderId', folderId);
   const res = await fetch('/api/documents/upload', { method: 'POST', body: formData });
   return handleResponse(res);
 }
@@ -54,6 +59,39 @@ export async function listDocuments(): Promise<{ documents: DocumentSummary[] }>
 
 export async function deleteDocument(documentId: string): Promise<{ success: boolean }> {
   const res = await fetch(`/api/documents/${documentId}`, { method: 'DELETE' });
+  return handleResponse(res);
+}
+
+export async function moveDocumentToFolder(
+  documentId: string,
+  folderId: string | null
+): Promise<{ id: string; folderId: string | null }> {
+  const res = await fetch(`/api/documents/${documentId}/folder`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folderId }),
+  });
+  return handleResponse(res);
+}
+
+// ---------- Folders ----------
+
+export async function listFolders(): Promise<{ folders: Folder[] }> {
+  const res = await fetch('/api/folders');
+  return handleResponse(res);
+}
+
+export async function createFolder(name: string): Promise<{ folder: Folder }> {
+  const res = await fetch('/api/folders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  return handleResponse(res);
+}
+
+export async function deleteFolder(folderId: string): Promise<{ success: boolean }> {
+  const res = await fetch(`/api/folders/${folderId}`, { method: 'DELETE' });
   return handleResponse(res);
 }
 

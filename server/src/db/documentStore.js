@@ -11,6 +11,7 @@ function toDb(doc) {
     uploaded_at: doc.uploadedAt,
     processed_at: doc.processedAt || null,
     error: doc.error || null,
+    folder_id: doc.folderId || null,
   };
 }
 
@@ -24,6 +25,10 @@ function fromDb(row) {
     uploadedAt: row.uploaded_at,
     processedAt: row.processed_at,
     error: row.error,
+    // undefined (not null) when the migration hasn't been run yet, so
+    // callers/frontend can tell "no folder" apart from "folders aren't
+    // supported by this database yet" if that ever matters.
+    folderId: 'folder_id' in row ? row.folder_id : undefined,
   };
 }
 
@@ -41,9 +46,18 @@ async function get(documentId) {
   return fromDb(data);
 }
 
-async function list() {
+/**
+ * @param {{ folderId?: string | null }} [options] - filter by folder.
+ *   Pass folderId: null explicitly to list only uncategorized documents;
+ *   omit it entirely to list everything regardless of folder.
+ */
+async function list(options = {}) {
   const supabase = getSupabase();
-  const { data, error } = await supabase.from(TABLE).select('*').order('uploaded_at', { ascending: false });
+  let query = supabase.from(TABLE).select('*').order('uploaded_at', { ascending: false });
+  if ('folderId' in options) {
+    query = options.folderId === null ? query.is('folder_id', null) : query.eq('folder_id', options.folderId);
+  }
+  const { data, error } = await query;
   if (error) throw new Error(`documentStore.list failed: ${error.message}`);
   return (data || []).map(fromDb);
 }
@@ -61,6 +75,21 @@ async function updateStatus(documentId, updates) {
   return fromDb(data);
 }
 
+/** Assigns (or clears, with folderId: null) a document's folder. Separate
+ * from updateStatus since this is a distinct user action (organizing),
+ * not a pipeline state transition. */
+async function moveToFolder(documentId, folderId) {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from(TABLE)
+    .update({ folder_id: folderId })
+    .eq('id', documentId)
+    .select()
+    .maybeSingle();
+  if (error) throw new Error(`documentStore.moveToFolder failed: ${error.message}`);
+  return fromDb(data);
+}
+
 async function remove(documentId) {
   const supabase = getSupabase();
   const { error } = await supabase.from(TABLE).delete().eq('id', documentId);
@@ -68,4 +97,4 @@ async function remove(documentId) {
   return true;
 }
 
-module.exports = { create, get, list, updateStatus, remove };
+module.exports = { create, get, list, updateStatus, moveToFolder, remove };

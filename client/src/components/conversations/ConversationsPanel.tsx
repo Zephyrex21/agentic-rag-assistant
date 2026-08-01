@@ -1,8 +1,12 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageSquare, Trash2 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { MessageSquare, Trash2, Search } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useConversations } from '../../context/ConversationsContext';
 import { ConversationRowSkeleton } from '../ui/Skeleton';
+
+// Below this count, a search box just adds clutter - scanning a handful of
+// titles by eye is faster than typing (same threshold logic as DocumentsPanel).
+const SEARCH_THRESHOLD = 6;
 
 export function ConversationsPanel() {
   const {
@@ -12,6 +16,7 @@ export function ConversationsPanel() {
     selectConversation,
     deleteConversation,
   } = useConversations();
+  const [query, setQuery] = useState('');
 
   // Frozen the same way as DocumentsPanel's - flips only once real data has
   // arrived (not on the raw first render, which happens before the async
@@ -20,6 +25,12 @@ export function ConversationsPanel() {
   useEffect(() => {
     if (!conversationsLoading) isFirstMount.current = false;
   }, [conversationsLoading]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return conversations;
+    return conversations.filter((c) => c.title.toLowerCase().includes(q));
+  }, [conversations, query]);
 
   if (conversationsLoading) {
     return (
@@ -36,9 +47,24 @@ export function ConversationsPanel() {
   }
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-2">
+      {conversations.length >= SEARCH_THRESHOLD && (
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-1.5">
+          <Search size={12} className="shrink-0 text-ink-muted" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter conversations..."
+            className="w-full bg-transparent text-xs text-ink placeholder:text-ink-muted focus:outline-none"
+          />
+        </div>
+      )}
+      {filtered.length === 0 && (
+        <p className="px-2 text-xs text-ink-muted">No conversations match "{query}".</p>
+      )}
+      <div className="flex flex-col gap-1">
       <AnimatePresence initial={false}>
-        {conversations.map((c, i) => (
+        {filtered.map((c, i) => (
           <ConversationRow
             key={c.id}
             title={c.title}
@@ -49,6 +75,7 @@ export function ConversationsPanel() {
           />
         ))}
       </AnimatePresence>
+      </div>
     </div>
   );
 }

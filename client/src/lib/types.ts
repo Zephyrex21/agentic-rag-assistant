@@ -1,5 +1,11 @@
 export type DocumentStatus = 'processing' | 'ready' | 'failed';
 
+export interface Folder {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
 export interface DocumentSummary {
   id: string;
   filename: string;
@@ -7,6 +13,7 @@ export interface DocumentSummary {
   chunkCount: number;
   uploadedAt: string;
   error?: string;
+  folderId: string | null;
 }
 
 export interface Source {

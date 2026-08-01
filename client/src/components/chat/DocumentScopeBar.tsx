@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { motion } from 'framer-motion';
-import { FileText, ChevronDown, X, Check, Upload, Globe } from 'lucide-react';
+import { FileText, ChevronDown, X, Check, Upload, Globe, Download } from 'lucide-react';
 import { useConversations } from '../../context/ConversationsContext';
 import { useDocuments } from '../../context/DocumentsContext';
+import { downloadConversationMarkdown } from '../../lib/exportConversation';
 
 export function DocumentScopeBar() {
-  const { activeScope, setActiveScope } = useConversations();
+  const { activeScope, setActiveScope, activeConversation } = useConversations();
   const { documents, upload } = useDocuments();
   const [open, setOpen] = useState(false);
 
@@ -23,9 +24,10 @@ export function DocumentScopeBar() {
 
   return (
     <div
-      className="flex flex-wrap items-center gap-1.5 border-b border-border-subtle bg-surface px-4 py-2.5 sm:px-6"
+      className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle bg-surface px-4 py-2.5 sm:px-6"
       style={{ boxShadow: '0 8px 24px -16px rgba(22,22,26,0.08)' }}
     >
+      <div className="flex flex-wrap items-center gap-1.5">
       {scopedDocs.length === 0 ? (
         <span className="flex items-center gap-1.5 rounded-full bg-background px-2.5 py-1 text-xs text-ink-muted">
           <Globe size={11} />
@@ -130,6 +132,22 @@ export function DocumentScopeBar() {
           </Popover.Content>
         </Popover.Portal>
       </Popover.Root>
+      </div>
+
+      {activeConversation && activeConversation.messages.length > 0 && (
+        <motion.button
+          type="button"
+          onClick={() => downloadConversationMarkdown(activeConversation)}
+          whileHover={{ scale: 1.04 }}
+          whileTap={{ scale: 0.94 }}
+          aria-label="Export conversation as Markdown"
+          title="Export conversation as Markdown"
+          className="flex shrink-0 items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs text-ink-muted transition-colors hover:border-accent hover:text-accent cursor-pointer"
+        >
+          <Download size={11} />
+          Export
+        </motion.button>
+      )}
     </div>
   );
 }

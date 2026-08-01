@@ -48,6 +48,12 @@ flowchart LR
 **Conversations**
 - Multi-turn memory backed by Supabase, with auto-titled threads
 - Per-conversation document scoping — pick exactly which uploaded document(s) a thread searches
+- Export any conversation to a clean, portable Markdown file (with citations and verification notes preserved)
+- Filter conversations by title (search box appears once there are enough to be worth filtering)
+
+**Documents**
+- Organize documents into folders, or leave them uncategorized — folders are a pure organizational layer, deleting one never deletes the documents inside it
+- Filter documents by filename or by folder
 
 **Citations**
 - Inline citation badges that expand into source cards (excerpt, full text, relevance score, chunk index)
@@ -96,7 +102,7 @@ agentic-rag-assistant/
 Free-tier accounts for [Groq](https://console.groq.com/keys) (no credit card required), [Jina AI](https://jina.ai/embeddings/), [Pinecone](https://app.pinecone.io), and [Supabase](https://supabase.com) — no paid tier required anywhere.
 
 ### 1. Supabase setup
-Run `server/supabase/schema.sql`, then `server/supabase/migration_002_hybrid_search.sql`, then `server/supabase/migration_003_self_verification.sql` in the Supabase SQL Editor.
+Run `server/supabase/schema.sql`, then `server/supabase/migration_002_hybrid_search.sql`, then `server/supabase/migration_003_self_verification.sql`, then `server/supabase/migration_004_document_folders.sql` in the Supabase SQL Editor.
 
 ### 2. Pinecone setup
 Create an index named to match `PINECONE_INDEX_NAME`, with **dimension 768** and **cosine** metric.
@@ -134,10 +140,13 @@ All configuration lives in `server/.env` (see `.env.example` for the full list w
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/documents/upload` | POST | Upload a document (`.txt`/`.md`/`.pdf`), returns immediately with async processing status |
+| `/api/documents/upload` | POST | Upload a document (`.txt`/`.md`/`.pdf`), returns immediately with async processing status. Optional `folderId` form field |
 | `/api/documents/:id/status` | GET | Poll ingestion status |
-| `/api/documents` | GET | List all documents |
+| `/api/documents` | GET | List all documents. Optional `?folderId=<id>` or `?folderId=none` filter |
 | `/api/documents/:id` | DELETE | Remove a document and its vectors |
+| `/api/documents/:id/folder` | PATCH | Move a document to a folder (or `{folderId: null}` to uncategorize) |
+| `/api/folders` | GET/POST | List or create folders |
+| `/api/folders/:id` | DELETE | Delete a folder (documents inside become uncategorized, not deleted) |
 | `/api/query` | POST | Stateless Q&A, streamed via SSE |
 | `/api/conversations` | POST/GET | Create or list conversation threads |
 | `/api/conversations/:id` | GET/DELETE | Fetch or delete a thread |

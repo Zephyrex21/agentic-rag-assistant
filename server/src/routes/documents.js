@@ -64,6 +64,9 @@ router.post('/upload', (req, res) => {
         chunkCount: 0,
         uploadedAt: new Date().toISOString(),
         error: null,
+        // Optional - multer puts non-file form fields on req.body. Empty
+        // string/undefined both mean "no folder", not a literal folder id.
+        folderId: req.body.folderId || null,
       };
 
       await documentStore.create(doc);
@@ -102,9 +105,15 @@ router.get('/:id/status', async (req, res) => {
 });
 
 // GET /api/documents
+// Optional ?folderId=<uuid> filters to one folder; ?folderId=none lists
+// only uncategorized documents; omitted entirely lists everything.
 router.get('/', async (req, res) => {
   try {
-    const documents = await documentStore.list();
+    const options = {};
+    if (req.query.folderId === 'none') options.folderId = null;
+    else if (req.query.folderId) options.folderId = req.query.folderId;
+
+    const documents = await documentStore.list(options);
     res.json({
       documents: documents.map((d) => ({
         id: d.id,
@@ -112,11 +121,29 @@ router.get('/', async (req, res) => {
         status: d.status,
         chunkCount: d.chunkCount,
         uploadedAt: d.uploadedAt,
+        folderId: d.folderId ?? null,
       })),
     });
   } catch (err) {
     console.error('[documents] list failed:', err.message);
     errorResponse(res, 500, 'LIST_FAILED', err.message);
+  }
+});
+
+// PATCH /api/documents/:id/folder
+// Body: { folderId: string | null } - moves a document into a folder, or
+// back to uncategorized if folderId is null.
+router.patch('/:id/folder', async (req, res) => {
+  try {
+    const doc = await documentStore.get(req.params.id);
+    if (!doc) return errorResponse(res, 404, 'DOCUMENT_NOT_FOUND', 'No document with that ID.');
+
+    const folderId = req.body.folderId ?? null;
+    const updated = await documentStore.moveToFolder(req.params.id, folderId);
+    res.json({ id: updated.id, folderId: updated.folderId ?? null });
+  } catch (err) {
+    console.error('[documents] move to folder failed:', err.message);
+    errorResponse(res, 500, 'MOVE_FAILED', err.message);
   }
 });
 

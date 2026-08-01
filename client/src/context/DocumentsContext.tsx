@@ -7,8 +7,17 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { deleteDocument, getDocumentStatus, listDocuments, uploadDocument } from '../lib/api';
-import type { DocumentSummary } from '../lib/types';
+import {
+  createFolder as apiCreateFolder,
+  deleteDocument,
+  deleteFolder as apiDeleteFolder,
+  getDocumentStatus,
+  listDocuments,
+  listFolders,
+  moveDocumentToFolder,
+  uploadDocument,
+} from '../lib/api';
+import type { DocumentSummary, Folder } from '../lib/types';
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -16,8 +25,13 @@ interface DocumentsContextValue {
   documents: DocumentSummary[];
   loading: boolean;
   uploadError: string | null;
-  upload: (file: File) => Promise<void>;
+  upload: (file: File, folderId?: string | null) => Promise<void>;
   remove: (documentId: string) => Promise<void>;
+  folders: Folder[];
+  foldersLoading: boolean;
+  createFolder: (name: string) => Promise<Folder | null>;
+  deleteFolder: (folderId: string) => Promise<void>;
+  moveToFolder: (documentId: string, folderId: string | null) => Promise<void>;
 }
 
 const DocumentsContext = createContext<DocumentsContextValue | undefined>(undefined);
@@ -26,15 +40,27 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [foldersLoading, setFoldersLoading] = useState(true);
   const pollTimers = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
   const documentsRef = useRef(documents);
   documentsRef.current = documents;
+  const foldersRef = useRef(folders);
+  foldersRef.current = folders;
 
   useEffect(() => {
     listDocuments()
       .then(({ documents }) => setDocuments(documents))
       .catch(() => {})
       .finally(() => setLoading(false));
+
+    // Folders are an optional layer - if the migration hasn't been run yet
+    // on someone's Supabase project, this 404s/errors and we just show no
+    // folders rather than breaking the whole documents panel.
+    listFolders()
+      .then(({ folders }) => setFolders(folders))
+      .catch(() => {})
+      .finally(() => setFoldersLoading(false));
 
     const timers = pollTimers.current;
     return () => {
@@ -72,16 +98,17 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const upload = useCallback(
-    async (file: File) => {
+    async (file: File, folderId: string | null = null) => {
       setUploadError(null);
       try {
-        const result = await uploadDocument(file);
+        const result = await uploadDocument(file, folderId);
         const optimisticDoc: DocumentSummary = {
           id: result.documentId,
           filename: result.filename,
           status: 'processing',
           chunkCount: 0,
           uploadedAt: new Date().toISOString(),
+          folderId: folderId ?? null,
         };
         setDocuments((prev) => [optimisticDoc, ...prev]);
         pollStatus(result.documentId);
@@ -102,8 +129,56 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const createFolder = useCallback(async (name: string) => {
+    try {
+      const { folder } = await apiCreateFolder(name);
+      setFolders((prev) => [...prev, folder]);
+      return folder;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const deleteFolderFn = useCallback(async (folderId: string) => {
+    const previousFolders = foldersRef.current;
+    const previousDocs = documentsRef.current;
+    // Optimistic: remove the folder and uncategorize its documents
+    // immediately - matches what the DB's ON DELETE SET NULL will do.
+    setFolders((prev) => prev.filter((f) => f.id !== folderId));
+    setDocuments((prev) => prev.map((d) => (d.folderId === folderId ? { ...d, folderId: null } : d)));
+    try {
+      await apiDeleteFolder(folderId);
+    } catch {
+      setFolders(previousFolders);
+      setDocuments(previousDocs);
+    }
+  }, []);
+
+  const moveToFolder = useCallback(async (documentId: string, folderId: string | null) => {
+    const previous = documentsRef.current;
+    setDocuments((prev) => prev.map((d) => (d.id === documentId ? { ...d, folderId } : d)));
+    try {
+      await moveDocumentToFolder(documentId, folderId);
+    } catch {
+      setDocuments(previous);
+    }
+  }, []);
+
   return (
-    <DocumentsContext.Provider value={{ documents, loading, uploadError, upload, remove }}>
+    <DocumentsContext.Provider
+      value={{
+        documents,
+        loading,
+        uploadError,
+        upload,
+        remove,
+        folders,
+        foldersLoading,
+        createFolder,
+        deleteFolder: deleteFolderFn,
+        moveToFolder,
+      }}
+    >
       {children}
     </DocumentsContext.Provider>
   );

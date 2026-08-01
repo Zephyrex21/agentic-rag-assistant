@@ -7,6 +7,7 @@ const path = require('path');
 const documentsRouter = require('./routes/documents');
 const queryRouter = require('./routes/query');
 const conversationsRouter = require('./routes/conversations');
+const foldersRouter = require('./routes/folders');
 const { checkForProblematicModels, KNOWN_PROBLEMATIC_MODELS } = require('./services/modelFallback');
 
 // Uploads still land on local disk temporarily during processing (deleted after
@@ -58,6 +59,7 @@ app.get('/health', (req, res) => {
 app.use('/api/documents', documentsRouter);
 app.use('/api/query', queryRouter);
 app.use('/api/conversations', conversationsRouter);
+app.use('/api/folders', foldersRouter);
 
 // Centralized fallback error handler
 app.use((err, req, res, next) => {
