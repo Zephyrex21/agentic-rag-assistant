@@ -1,9 +1,22 @@
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
 import { transformCitationsToLinks, isCitationHref } from '../../lib/citations';
 import { CitationBadge } from './CitationBadge';
 import type { Source } from '../../lib/types';
+
+/**
+ * react-markdown sanitizes link URLs against a small protocol allowlist
+ * (http/https/irc/mailto/xmpp) by default and silently empties anything
+ * else - including our custom "citation:" scheme. Without this override,
+ * every citation link renders as a dead `href=""` anchor that LOOKS like a
+ * numbered link (same underline styling) but does nothing when clicked -
+ * an easy bug to miss visually since the broken state isn't obviously
+ * broken. Caught by an automated test, not by eye.
+ */
+function urlTransform(url: string): string {
+  return isCitationHref(url) !== null ? url : defaultUrlTransform(url);
+}
 
 export function AnswerText({ content, sources }: { content: string; sources?: Source[] | null }) {
   const sourceByNumber = new Map((sources || []).map((s) => [s.sourceNumber, s]));
@@ -55,7 +68,7 @@ export function AnswerText({ content, sources }: { content: string; sources?: So
 
   return (
     <div className="max-w-none">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={urlTransform}>
         {transformed}
       </ReactMarkdown>
     </div>

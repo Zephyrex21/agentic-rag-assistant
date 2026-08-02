@@ -70,6 +70,7 @@ flowchart LR
 |---|---|
 | Backend | Node.js, Express |
 | Frontend | React, Vite, TypeScript, Tailwind CSS, Framer Motion |
+| Testing | Vitest + React Testing Library (frontend), standalone Node scripts (backend) |
 | LLM | Groq (generation + reranking/rewriting/verification) |
 | Embeddings | Jina AI (`jina-embeddings-v3`) |
 | Vector store | Pinecone |
@@ -171,6 +172,14 @@ npm run test:prompt        # prompt construction, with/without conversation hist
 To check your actual API keys against the live Groq and Jina APIs (this one does need real keys in `.env`):
 ```bash
 npm run diagnose:keys
+```
+
+The frontend has its own Vitest suite — pure-logic tests (citation parsing, Markdown export) plus component tests (Composer send behavior, MessageBubble citation/verification rendering) using React Testing Library. No mocking of the backend needed for any of these; components that depend on Context are tested for their own rendering logic, not integration with a live API:
+
+```bash
+cd client
+npm test          # run once
+npm run test:watch # watch mode while developing
 ```
 
 ## Known Limitations
