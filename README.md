@@ -1,8 +1,39 @@
+<p align="center">
+  <img src="docs/banner.svg" alt="Agentic RAG Assistant" width="100%" />
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/license-MIT-0E6B57?style=flat-square" alt="MIT License" />
+  <img src="https://img.shields.io/badge/node-%3E%3D18-0E6B57?style=flat-square" alt="Node >= 18" />
+  <img src="https://img.shields.io/badge/react-19-0E6B57?style=flat-square" alt="React 19" />
+  <img src="https://img.shields.io/badge/typescript-strict-0E6B57?style=flat-square" alt="TypeScript strict" />
+</p>
+
 # Agentic RAG Assistant
 
 A full-stack retrieval-augmented generation system where every answer traces back to its exact source. Built to go beyond a basic "embed and search" wrapper — hybrid retrieval, LLM reranking, and query rewriting for follow-ups, wrapped in a real product UI with live streaming and verifiable citations.
 
 **Stack:** Node.js/Express · React (Vite) · TypeScript · Groq · Jina AI · Pinecone · Supabase
+
+<details>
+<summary><strong>Table of contents</strong></summary>
+
+- [Why this isn't just another RAG demo](#why-this-isnt-just-another-rag-demo)
+- [Screenshots](#screenshots)
+- [Architecture](#architecture)
+- [Key Features](#key-features)
+- [Tech Stack](#tech-stack)
+- [Project Structure](#project-structure)
+- [Getting Started](#getting-started)
+- [Configuration](#configuration)
+- [API Reference](#api-reference)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [Known Limitations](#known-limitations)
+- [Roadmap](#roadmap)
+- [License](#license)
+
+</details>
 
 ---
 
@@ -15,6 +46,16 @@ Most RAG tutorials stop at "embed chunks, do a vector search, stuff into a promp
 - **Query rewriting** — follow-up questions ("what about the second one?") get expanded into standalone queries using conversation history before retrieval runs
 - **Self-verification** — after an answer is generated, a separate check asks whether it's actually supported by the cited sources. If not, one corrected revision streams in as a visible replacement, with the specific problem fed back into the prompt — not a silent retry
 - **Verifiable citations** — every claim in an answer links back to the exact source chunk, with the model's own citation graph reflected in the UI (used vs. merely-retrieved sources are shown separately)
+
+## Screenshots
+
+<!--
+  Add real screenshots here before sharing this repo widely - a live shot
+  of the chat view (with citations expanded) and the document/folder
+  sidebar are the two most convincing. Drop PNGs in docs/screenshots/ and
+  reference them like:
+  <p align="center"><img src="docs/screenshots/chat.png" width="800" /></p>
+-->
 
 ## Architecture
 
@@ -43,7 +84,7 @@ flowchart LR
 - Hybrid search fused with RRF, LLM reranking with a rescue safety net for broad/overview questions
 - Self-verification with a single visible revision pass — answers are checked against their own cited sources after generation
 - Streaming responses via Server-Sent Events — answers appear token-by-token
-- Cross-family model fallback (generation/utility calls automatically retry on a different model family if the primary is decommissioned - see `modelFallback.js`)
+- Cross-family model fallback (generation/utility calls automatically retry on a different model family if the primary is decommissioned - see `modelFallback.js`), plus a separate provider-level fallback (Mistral) if Groq itself is unreachable, not just a single model
 
 **Conversations**
 - Multi-turn memory backed by Supabase, with auto-titled threads
@@ -60,9 +101,12 @@ flowchart LR
 - Distinguishes sources the model actually cited from ones merely retrieved
 
 **Frontend**
-- Apple-inspired dual-theme UI (light/dark, zero flash on load) with Framer Motion throughout
-- Command palette (Cmd/Ctrl+K) for quick navigation and conversation search
-- Markdown rendering, skeleton loading states, fully responsive
+- Custom "Ledger" design system — a research-ledger/evidence-desk aesthetic (cool sage paper tones, verdigris + rust-sienna dual accents, Newsreader serif + Public Sans + JetBrains Mono) built deliberately away from the cream-and-one-accent look most AI-generated UIs default to; full light/dark theming with zero flash on load
+- Citation badges styled as archive stamps (a signature element tied directly to the product's actual mechanic, not decoration) with spring-physics entrance animation
+- Command palette (Cmd/Ctrl+K) for quick navigation and conversation search, with staggered result entrance
+- Ambient animated background, staggered list/message entrance, page-transition choreography throughout via Framer Motion — all respecting `prefers-reduced-motion`
+- Code-split so the landing page ships independently from the app shell (~108KB gzipped initial load vs. ~190KB before splitting)
+- Fully responsive, including a proper mobile drawer sidebar
 
 ## Tech Stack
 
@@ -71,7 +115,7 @@ flowchart LR
 | Backend | Node.js, Express |
 | Frontend | React, Vite, TypeScript, Tailwind CSS, Framer Motion |
 | Testing | Vitest + React Testing Library (frontend), standalone Node scripts (backend) |
-| LLM | Groq (generation + reranking/rewriting/verification) |
+| LLM | Groq (generation + reranking/rewriting/verification), Mistral AI (optional provider-level fallback) |
 | Embeddings | Jina AI (`jina-embeddings-v3`) |
 | Vector store | Pinecone |
 | Database | Supabase (Postgres) — documents, conversations, messages, full-text search index |
@@ -83,10 +127,10 @@ flowchart LR
 agentic-rag-assistant/
 ├── server/
 │   ├── src/
-│   │   ├── routes/       # documents, query, conversations (SSE streaming)
+│   │   ├── routes/       # documents, folders, query, conversations (SSE streaming)
 │   │   ├── services/     # chunking, embeddings, retrieval pipeline, reranking,
 │   │   │                 # query rewriting, self-verification, RRF fusion, model resilience
-│   │   ├── db/           # Supabase-backed stores (documents, conversations, chunks)
+│   │   ├── db/           # Supabase-backed stores (documents, folders, conversations, chunks)
 │   │   ├── workers/      # async ingestion pipeline
 │   │   └── utils/        # standalone test suites for pure/testable logic
 │   └── supabase/         # SQL schema + migrations
@@ -94,7 +138,8 @@ agentic-rag-assistant/
     └── src/
         ├── components/   # chat, citations, documents, conversations, command palette
         ├── context/      # theme, documents, conversations state
-        └── lib/          # API client (incl. SSE streaming), types
+        ├── lib/          # API client (incl. SSE streaming), types, export/citation logic
+        └── test/         # Vitest unit + component tests
 ```
 
 ## Getting Started
@@ -133,6 +178,7 @@ All configuration lives in `server/.env` (see `.env.example` for the full list w
 |---|---|
 | `GROQ_API_KEY` | Single shared key for generation/reranking/rewriting/verification — Groq rate-limits per organization, not per key, so there's no benefit to splitting this |
 | `JINA_API_KEY` | Embeddings key — kept on a separate provider from Groq since Groq doesn't have a reliably documented embeddings API |
+| `MISTRAL_API_KEY` | Optional provider-level fallback if Groq is entirely unreachable — unset simply skips this, no code changes needed |
 | `ENABLE_HYBRID_SEARCH`, `ENABLE_RERANKING`, `ENABLE_QUERY_REWRITE`, `ENABLE_SELF_VERIFICATION` | Toggle any pipeline stage independently, no code changes needed |
 | `RETRIEVAL_TOP_K`, `RETRIEVAL_CANDIDATE_POOL` | Tune how many chunks are considered vs. sent to the model |
 | `GENERATION_MODEL_FALLBACK`, `UTILITY_MODEL_FALLBACK` | Automatic fallback models if a primary model is deprecated/unavailable |
