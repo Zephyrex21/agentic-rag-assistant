@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel a run in progress if new commits land on the same branch/PR
+# before it finishes - saves CI minutes, standard practice.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
+
+      # npm ci (not install) - exact versions from the lock file, and
+      # fails loudly if package.json and package-lock.json ever drift out
+      # of sync, which npm install would silently paper over.
+      - run: npm ci
+
+      - name: Syntax check every source file
+        run: |
+          for f in $(find src -name "*.js"); do
+            node --check "$f" || exit 1
+          done
+
+      # All standalone test suites - pure logic, no API keys needed, so
+      # this runs green with zero secrets configured in the repo. That's
+      # deliberate: it's what makes these fast and safe to run on every
+      # push, unlike diagnose:keys (not run here - needs real provider
+      # keys and makes live network calls, it's a manual local tool).
+      - run: npm run test:rrf
+      - run: npm run test:chunking
+      - run: npm run test:citations
+      - run: npm run test:reranker
+      - run: npm run test:modelfallback
+      - run: npm run test:verification
+      - run: npm run test:prompt
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: client/package-lock.json
+
+      - run: npm ci
+
+      - name: Type check
+        run: npx tsc -b
+
+      - name: Unit + component tests
+        run: npm test
+
+      - name: Lint
+        run: npm run lint
+
+      # Building (not just type-checking) catches issues type-checking
+      # alone can miss - e.g. an import that resolves for TS but not for
+      # the bundler, or a Tailwind/asset problem that only surfaces at
+      # build time.
+      - name: Production build
+        run: npm run build

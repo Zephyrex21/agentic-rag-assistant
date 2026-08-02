@@ -1,6 +1,9 @@
 {
   "name": "rag-assistant-server",
   "version": "1.0.0",
+  "engines": {
+    "node": ">=18"
+  },
   "description": "Agentic RAG Knowledge Assistant - Backend (Phase 1: Ingestion Pipeline)",
   "main": "src/app.js",
   "type": "commonjs",

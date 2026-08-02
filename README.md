@@ -3,6 +3,7 @@
 </p>
 
 <p align="center">
+  <img src="https://github.com/Zephyrex21/agentic-rag-assistant/actions/workflows/ci.yml/badge.svg" alt="CI" />
   <img src="https://img.shields.io/badge/license-MIT-0E6B57?style=flat-square" alt="MIT License" />
   <img src="https://img.shields.io/badge/node-%3E%3D18-0E6B57?style=flat-square" alt="Node >= 18" />
   <img src="https://img.shields.io/badge/react-19-0E6B57?style=flat-square" alt="React 19" />
@@ -201,6 +202,8 @@ All configuration lives in `server/.env` (see `.env.example` for the full list w
 | `/health` | GET | Service status, configured providers, and active pipeline configuration |
 
 ## Testing
+
+Every push and PR to `main` runs the full suite below via [GitHub Actions](.github/workflows/ci.yml) — backend and frontend jobs in parallel, no secrets required (see why in the workflow file's comments). To run the same checks locally:
 
 The backend includes standalone test suites for all pure/testable logic — no API keys required to run:
 
