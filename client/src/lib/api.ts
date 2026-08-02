@@ -7,6 +7,19 @@ import type {
   Source,
 } from './types';
 
+/**
+ * Empty by default - every call below becomes a plain relative `/api/...`
+ * path, exactly as before. That's correct for local dev (Vite's proxy
+ * handles it) AND for a production deploy where the frontend and backend
+ * are served from the same origin (e.g. the backend serves the built
+ * frontend, or the hosting platform rewrites /api/* to the backend).
+ *
+ * Set VITE_API_BASE_URL at build time (e.g. "https://your-api.onrender.com")
+ * only if the frontend and backend are deployed to genuinely separate
+ * domains - see the Deployment section in the README.
+ */
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+
 export class ApiError extends Error {
   code: string;
   status: number;
@@ -41,24 +54,24 @@ export async function uploadDocument(
   const formData = new FormData();
   formData.append('file', file);
   if (folderId) formData.append('folderId', folderId);
-  const res = await fetch('/api/documents/upload', { method: 'POST', body: formData });
+  const res = await fetch(`${API_BASE}/api/documents/upload`, { method: 'POST', body: formData });
   return handleResponse(res);
 }
 
 export async function getDocumentStatus(
   documentId: string
 ): Promise<{ documentId: string; status: string; chunkCount: number; error?: string }> {
-  const res = await fetch(`/api/documents/${documentId}/status`);
+  const res = await fetch(`${API_BASE}/api/documents/${documentId}/status`);
   return handleResponse(res);
 }
 
 export async function listDocuments(): Promise<{ documents: DocumentSummary[] }> {
-  const res = await fetch('/api/documents');
+  const res = await fetch(`${API_BASE}/api/documents`);
   return handleResponse(res);
 }
 
 export async function deleteDocument(documentId: string): Promise<{ success: boolean }> {
-  const res = await fetch(`/api/documents/${documentId}`, { method: 'DELETE' });
+  const res = await fetch(`${API_BASE}/api/documents/${documentId}`, { method: 'DELETE' });
   return handleResponse(res);
 }
 
@@ -66,7 +79,7 @@ export async function moveDocumentToFolder(
   documentId: string,
   folderId: string | null
 ): Promise<{ id: string; folderId: string | null }> {
-  const res = await fetch(`/api/documents/${documentId}/folder`, {
+  const res = await fetch(`${API_BASE}/api/documents/${documentId}/folder`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ folderId }),
@@ -77,12 +90,12 @@ export async function moveDocumentToFolder(
 // ---------- Folders ----------
 
 export async function listFolders(): Promise<{ folders: Folder[] }> {
-  const res = await fetch('/api/folders');
+  const res = await fetch(`${API_BASE}/api/folders`);
   return handleResponse(res);
 }
 
 export async function createFolder(name: string): Promise<{ folder: Folder }> {
-  const res = await fetch('/api/folders', {
+  const res = await fetch(`${API_BASE}/api/folders`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -91,29 +104,29 @@ export async function createFolder(name: string): Promise<{ folder: Folder }> {
 }
 
 export async function deleteFolder(folderId: string): Promise<{ success: boolean }> {
-  const res = await fetch(`/api/folders/${folderId}`, { method: 'DELETE' });
+  const res = await fetch(`${API_BASE}/api/folders/${folderId}`, { method: 'DELETE' });
   return handleResponse(res);
 }
 
 // ---------- Conversations ----------
 
 export async function createConversation(): Promise<{ conversationId: string; title: string }> {
-  const res = await fetch('/api/conversations', { method: 'POST' });
+  const res = await fetch(`${API_BASE}/api/conversations`, { method: 'POST' });
   return handleResponse(res);
 }
 
 export async function listConversations(): Promise<{ conversations: ConversationSummary[] }> {
-  const res = await fetch('/api/conversations');
+  const res = await fetch(`${API_BASE}/api/conversations`);
   return handleResponse(res);
 }
 
 export async function getConversation(conversationId: string): Promise<ConversationDetail> {
-  const res = await fetch(`/api/conversations/${conversationId}`);
+  const res = await fetch(`${API_BASE}/api/conversations/${conversationId}`);
   return handleResponse(res);
 }
 
 export async function deleteConversation(conversationId: string): Promise<{ success: boolean }> {
-  const res = await fetch(`/api/conversations/${conversationId}`, { method: 'DELETE' });
+  const res = await fetch(`${API_BASE}/api/conversations/${conversationId}`, { method: 'DELETE' });
   return handleResponse(res);
 }
 
@@ -219,7 +232,7 @@ export function sendMessageStream(
   documentIds: string[] | undefined,
   callbacks: StreamCallbacks
 ): Promise<void> {
-  return postStream(`/api/conversations/${conversationId}/messages`, { question, documentIds }, callbacks);
+  return postStream(`${API_BASE}/api/conversations/${conversationId}/messages`, { question, documentIds }, callbacks);
 }
 
 export function queryStream(
@@ -227,7 +240,7 @@ export function queryStream(
   documentIds: string[] | undefined,
   callbacks: StreamCallbacks
 ): Promise<void> {
-  return postStream('/api/query', { question, documentIds }, callbacks);
+  return postStream(`${API_BASE}/api/query`, { question, documentIds }, callbacks);
 }
 
 export type { Message };

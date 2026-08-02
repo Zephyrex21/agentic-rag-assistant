@@ -1,24 +1,37 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { AnimatePresence, motion, MotionConfig } from 'framer-motion';
 import { ThemeProvider } from './context/ThemeContext';
 import { DocumentsProvider } from './context/DocumentsContext';
 import { ConversationsProvider } from './context/ConversationsContext';
 import { Hero } from './components/hero/Hero';
-import { AppShell } from './components/layout/AppShell';
-import { Sidebar, type SidebarTab } from './components/layout/Sidebar';
-import { ConversationsPanel } from './components/conversations/ConversationsPanel';
-import { NewConversationButton } from './components/conversations/NewConversationButton';
-import { DocumentsPanel } from './components/documents/DocumentsPanel';
-import { ChatPanel } from './components/chat/ChatPanel';
-import { CommandPalette } from './components/command/CommandPalette';
 import { GrainOverlay } from './components/GrainOverlay';
 import { AmbientBackground } from './components/AmbientBackground';
 
+// Split out of the initial bundle - see MainAppView.tsx for why. The
+// landing page (Hero, above) stays eager since it's the very first thing
+// anyone sees; everything markdown/command-palette/panel-related only
+// loads once someone actually clicks in.
+const MainAppView = lazy(() => import('./MainAppView'));
+
 type View = 'hero' | 'app';
+
+function LoadingFallback() {
+  // Deliberately minimal and quick, not a branded splash screen - this
+  // only shows for the brief moment the lazy chunk is fetching, which on
+  // any reasonable connection is well under a second.
+  return (
+    <div className="flex h-svh w-full items-center justify-center">
+      <motion.div
+        className="h-8 w-8 rounded-full border-2 border-accent border-t-transparent"
+        animate={{ rotate: 360 }}
+        transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
+      />
+    </div>
+  );
+}
 
 function AppContent() {
   const [view, setView] = useState<View>('hero');
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('chats');
 
   return (
     <AnimatePresence mode="wait">
@@ -27,27 +40,9 @@ function AppContent() {
           <Hero onEnter={() => setView('app')} />
         </motion.div>
       ) : (
-        <motion.div
-          key="app"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.4 }}
-          className="h-svh"
-        >
-          <CommandPalette onNavigateToDocuments={() => setSidebarTab('documents')} />
-          <AppShell
-            sidebar={
-              <Sidebar
-                tab={sidebarTab}
-                onTabChange={setSidebarTab}
-                newConversationSlot={<NewConversationButton />}
-                chatsSlot={<ConversationsPanel />}
-                documentsSlot={<DocumentsPanel />}
-              />
-            }
-            main={<ChatPanel />}
-          />
-        </motion.div>
+        <Suspense fallback={<LoadingFallback />}>
+          <MainAppView />
+        </Suspense>
       )}
     </AnimatePresence>
   );

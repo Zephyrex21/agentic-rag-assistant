@@ -182,6 +182,37 @@ npm test          # run once
 npm run test:watch # watch mode while developing
 ```
 
+## Deployment
+
+Two services to deploy: the Node/Express backend and the static Vite/React frontend build. Free tiers work fine for a personal project.
+
+### 1. Database (once, before either service)
+
+Run all four `server/supabase/*.sql` files against your **production** Supabase project (same steps as local setup) — a separate Supabase project than the one you used for local dev, if you want to keep them independent.
+
+### 2. Backend
+
+Any Node host works (Render, Railway, Fly.io). Using Render as the example:
+1. New Web Service → point at this repo → root directory `server`
+2. Build command: `npm install`
+3. Start command: `npm start`
+4. Add every variable from `server/.env.example` in the host's environment variable settings — **not** the `.env` file itself, which is gitignored and never deployed
+5. Note the resulting URL (e.g. `https://your-app.onrender.com`)
+
+Free tiers on most of these hosts spin the server down after a period of inactivity and take a few seconds to wake back up on the next request — expected, not a bug, if the very first request after a while feels slow.
+
+### 3. Frontend
+
+Any static host works (Vercel, Netlify, Cloudflare Pages). Using Vercel as the example:
+1. New Project → point at this repo → root directory `client`
+2. Build command: `npm run build`, output directory: `dist`
+3. **If the frontend and backend end up on separate domains** (the common case with this two-host setup), add one build-time environment variable: `VITE_API_BASE_URL=https://your-backend-url` (from step 2) — without this, the frontend's `/api/...` calls have nowhere to go, since Vite's local dev proxy only exists in development
+4. If instead you're serving both from the same domain (e.g. the backend also serves the built frontend as static files, or your host rewrites `/api/*` to the backend), skip step 3 entirely — the default relative-path behavior already works
+
+### 4. Lock down CORS (optional)
+
+By default the backend accepts requests from any origin (fine for local dev and same-domain deploys). If the frontend is on a separate domain, set `ALLOWED_ORIGIN=https://your-frontend-url` in the backend's environment to restrict this. There's no authentication layer in this app either way (see Known Limitations below) — this is a defense-in-depth setting, not access control.
+
 ## Known Limitations
 
 - Retrieval uses only the current question's embedding — conversation history informs *generation* (via query rewriting before retrieval) but isn't otherwise used to re-rank results

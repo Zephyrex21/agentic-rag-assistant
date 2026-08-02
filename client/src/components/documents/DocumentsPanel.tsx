@@ -336,7 +336,7 @@ function DocumentRow({
               type="button"
               aria-label={`Move ${doc.filename} to a folder`}
               title={currentFolder ? currentFolder.name : 'Move to folder'}
-              className={`shrink-0 rounded-md p-1 transition-opacity cursor-pointer ${
+              className={`shrink-0 rounded-md p-1.5 transition-opacity cursor-pointer max-md:opacity-70 ${
                 currentFolder ? 'text-accent opacity-100' : 'text-ink-muted opacity-0 group-hover:opacity-100'
               }`}
             >
@@ -406,7 +406,7 @@ function DocumentRow({
           type="button"
           onClick={() => setConfirming(true)}
           aria-label={`Delete ${doc.filename}`}
-          className="shrink-0 rounded-md p-1 text-ink-muted opacity-0 transition-opacity hover:text-highlight group-hover:opacity-100 cursor-pointer"
+          className="shrink-0 rounded-md p-1.5 text-ink-muted opacity-0 transition-opacity hover:text-highlight group-hover:opacity-100 max-md:opacity-70 cursor-pointer"
         >
           <Trash2 size={13} />
         </button>

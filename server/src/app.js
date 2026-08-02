@@ -18,7 +18,14 @@ if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const app = express();
 
-app.use(cors());
+// ALLOWED_ORIGIN is optional - unset (the default) allows all origins,
+// which is fine for local dev and for a same-origin production deploy
+// (frontend/backend behind one domain). Set it explicitly if the frontend
+// is deployed to a separate domain and you want to lock CORS down to just
+// that origin instead of "*". No auth layer exists in this app (see
+// README's Known Limitations), so this is a defense-in-depth knob, not a
+// substitute for real access control.
+app.use(cors(process.env.ALLOWED_ORIGIN ? { origin: process.env.ALLOWED_ORIGIN } : undefined));
 app.use(express.json());
 
 // Defense in depth: if any route handler ever has an unwrapped async call that

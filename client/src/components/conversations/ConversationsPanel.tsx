@@ -139,7 +139,7 @@ function ConversationRow({
               setConfirming(true);
             }}
             aria-label={`Delete conversation ${title}`}
-            className="shrink-0 rounded-md p-1 opacity-0 transition-opacity hover:text-highlight group-hover:opacity-100"
+            className="shrink-0 rounded-md p-1.5 opacity-0 transition-opacity hover:text-highlight group-hover:opacity-100 max-md:opacity-70 cursor-pointer"
           >
             <Trash2 size={12} />
           </span>
