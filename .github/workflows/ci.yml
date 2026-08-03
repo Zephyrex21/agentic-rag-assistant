@@ -63,7 +63,14 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # 22, not 20 like the backend job - jsdom (a dev dependency, only
+          # used for running tests) depends on undici, and undici v8+
+          # dropped Node 20 support without a major-version bump to signal
+          # it (confirmed: https://github.com/nodejs/undici/issues/5024).
+          # This only affects test tooling, not the actual app - the built
+          # frontend and the backend both still run fine on Node >=18, per
+          # the engines field in both package.json files.
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: client/package-lock.json
 
