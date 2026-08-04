@@ -1,7 +1,7 @@
 const express = require('express');
 const { randomUUID } = require('crypto');
 
-const { retrieveAndAnswerStream } = require('../services/rag');
+const rag = require('../services/rag');
 
 const router = express.Router();
 
@@ -44,7 +44,7 @@ router.post('/', async (req, res) => {
     let verified = true;
     let wasRevised = false;
 
-    for await (const event of retrieveAndAnswerStream(question, { documentIds })) {
+    for await (const event of rag.retrieveAndAnswerStream(question, { documentIds })) {
       if (clientDisconnected) break;
 
       if (event.type === 'sources') {

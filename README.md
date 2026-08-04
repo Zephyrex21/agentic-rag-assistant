@@ -133,7 +133,10 @@ agentic-rag-assistant/
 │   │   │                 # query rewriting, self-verification, RRF fusion, model resilience
 │   │   ├── db/           # Supabase-backed stores (documents, folders, conversations, chunks)
 │   │   ├── workers/      # async ingestion pipeline
-│   │   └── utils/        # standalone test suites for pure/testable logic
+│   │   ├── utils/        # standalone test suites for pure/testable logic
+│   │   ├── app.js        # builds the Express app (no side effects - safe to import in tests)
+│   │   └── server.js     # actual boot entry point (app.js + app.listen())
+│   ├── test/              # HTTP-level route tests (Express + supertest, DB layer mocked)
 │   └── supabase/         # SQL schema + migrations
 └── client/
     └── src/
@@ -216,6 +219,12 @@ npm run test:citations     # citation extraction from answer text
 npm run test:modelfallback # model deprecation fallback behavior
 npm run test:verification  # self-verification response parsing, fail-open behavior
 npm run test:prompt        # prompt construction, with/without conversation history
+```
+
+A second layer tests the HTTP route handlers themselves (Express + [supertest](https://github.com/ladjs/supertest)), covering request validation, status codes, and error-path behavior (e.g. a document delete that still succeeds even if the Pinecone cleanup call fails, or a conversation that only gets auto-titled on its first message, not every message). The DB and provider layers are mocked with `node:test`'s built-in `t.mock.method()` — no live Supabase/Pinecone/Groq calls, so like everything else here it runs green with zero secrets configured:
+
+```bash
+npm run test:routes
 ```
 
 To check your actual API keys against the live Groq and Jina APIs (this one does need real keys in `.env`):

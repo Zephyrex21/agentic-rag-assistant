@@ -1,7 +1,7 @@
 const express = require('express');
 
 const conversationStore = require('../db/conversationStore');
-const { retrieveAndAnswerStream } = require('../services/rag');
+const rag = require('../services/rag');
 
 const router = express.Router();
 
@@ -104,7 +104,7 @@ router.post('/:id/messages', async (req, res) => {
     let verified = true;
     let wasRevised = false;
 
-    for await (const event of retrieveAndAnswerStream(question, { documentIds, history })) {
+    for await (const event of rag.retrieveAndAnswerStream(question, { documentIds, history })) {
       if (clientDisconnected) break; // stop doing work if nobody's listening anymore
 
       if (event.type === 'sources') {

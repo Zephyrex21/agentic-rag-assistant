@@ -8,8 +8,8 @@
   "main": "src/app.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node src/app.js",
-    "dev": "nodemon src/app.js",
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
     "test:chunking": "node src/utils/test-chunking.js",
     "test:prompt": "node src/utils/test-prompt.js",
     "test:citations": "node src/utils/test-citations.js",
@@ -17,6 +17,7 @@
     "test:reranker": "node src/utils/test-reranker.js",
     "test:modelfallback": "node src/utils/test-modelfallback.js",
     "test:verification": "node src/utils/test-verification.js",
+    "test:routes": "node --test \"test/*.test.js\"",
     "diagnose:keys": "node src/utils/diagnose-api-keys.js"
   },
   "dependencies": {
@@ -31,6 +32,7 @@
     "pdf-parse": "^1.1.1"
   },
   "devDependencies": {
-    "nodemon": "^3.1.4"
+    "nodemon": "^3.1.4",
+    "supertest": "^7.2.2"
   }
 }

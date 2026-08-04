@@ -8,7 +8,7 @@ const documentsRouter = require('./routes/documents');
 const queryRouter = require('./routes/query');
 const conversationsRouter = require('./routes/conversations');
 const foldersRouter = require('./routes/folders');
-const { checkForProblematicModels, KNOWN_PROBLEMATIC_MODELS } = require('./services/modelFallback');
+const { KNOWN_PROBLEMATIC_MODELS } = require('./services/modelFallback');
 
 // Uploads still land on local disk temporarily during processing (deleted after
 // ingestion completes). Document/conversation metadata now lives in Supabase
@@ -79,22 +79,8 @@ app.use((req, res) => {
   res.status(404).json({ error: { code: 'NOT_FOUND', message: `No route: ${req.method} ${req.path}` } });
 });
 
-const PORT = process.env.PORT || 5000;
-
-checkForProblematicModels({
-  GENERATION_MODEL: process.env.GENERATION_MODEL,
-  GENERATION_MODEL_FALLBACK: process.env.GENERATION_MODEL_FALLBACK,
-  UTILITY_MODEL: process.env.UTILITY_MODEL,
-  UTILITY_MODEL_FALLBACK: process.env.UTILITY_MODEL_FALLBACK,
-});
-
-app.listen(PORT, () => {
-  console.log(`\n🚀 RAG Assistant server running on http://localhost:${PORT}`);
-  console.log(`   Health check: http://localhost:${PORT}/health`);
-  console.log(
-    `   Groq: ${process.env.GROQ_API_KEY ? 'configured' : 'MISSING - set GROQ_API_KEY in .env'} | ` +
-      `Jina: ${process.env.JINA_API_KEY ? 'configured' : 'MISSING - set JINA_API_KEY in .env'}\n`
-  );
-});
-
+// Deliberately just builds and exports the app - no app.listen() here.
+// That lives in server.js instead, so route tests (server/test/) can
+// require this file and mount it in supertest without accidentally
+// starting a real server on a real port every time a test file loads.
 module.exports = app;

@@ -7,7 +7,7 @@ const documentStore = require('../db/documentStore');
 const chunkStore = require('../db/chunkStore');
 const { isSupportedFile } = require('../services/textExtraction');
 const { deleteByDocumentId } = require('../services/pinecone');
-const { processDocument } = require('../workers/ingestionWorker');
+const ingestionWorker = require('../workers/ingestionWorker');
 
 const router = express.Router();
 
@@ -73,7 +73,7 @@ router.post('/upload', (req, res) => {
 
       // Fire-and-forget: async worker updates status as it progresses.
       // Not awaited on purpose - this is what makes upload non-blocking.
-      processDocument({
+      ingestionWorker.processDocument({
         documentId,
         filePath: req.file.path,
         filename: req.file.originalname,
