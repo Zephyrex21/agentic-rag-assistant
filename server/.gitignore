@@ -3,4 +3,5 @@ node_modules/
 data/*.json
 uploads/*
 !uploads/.gitkeep
+eval/last-report.json
 *.log

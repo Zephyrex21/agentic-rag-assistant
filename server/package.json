@@ -18,6 +18,7 @@
     "test:modelfallback": "node src/utils/test-modelfallback.js",
     "test:verification": "node src/utils/test-verification.js",
     "test:routes": "node --test \"test/*.test.js\"",
+    "eval": "node eval/run-eval.js",
     "diagnose:keys": "node src/utils/diagnose-api-keys.js"
   },
   "dependencies": {

@@ -15,6 +15,9 @@ build/
 server/uploads/*
 !server/uploads/.gitkeep
 
+# Eval harness output (regenerated on every run)
+server/eval/last-report.json
+
 # Logs
 *.log
 npm-debug.log*

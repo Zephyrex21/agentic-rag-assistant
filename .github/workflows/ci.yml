@@ -35,7 +35,7 @@ jobs:
 
       - name: Syntax check every source file
         run: |
-          for f in $(find src -name "*.js"); do
+          for f in $(find src -name "*.js") eval/run-eval.js; do
             node --check "$f" || exit 1
           done
 

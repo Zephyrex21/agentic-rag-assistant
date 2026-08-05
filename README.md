@@ -29,6 +29,7 @@ A full-stack retrieval-augmented generation system where every answer traces bac
 - [Configuration](#configuration)
 - [API Reference](#api-reference)
 - [Testing](#testing)
+- [Evaluation](#evaluation)
 - [Deployment](#deployment)
 - [Known Limitations](#known-limitations)
 - [Roadmap](#roadmap)
@@ -86,6 +87,7 @@ flowchart LR
 - Self-verification with a single visible revision pass — answers are checked against their own cited sources after generation
 - Streaming responses via Server-Sent Events — answers appear token-by-token
 - Cross-family model fallback (generation/utility calls automatically retry on a different model family if the primary is decommissioned - see `modelFallback.js`), plus a separate provider-level fallback (Mistral) if Groq itself is unreachable, not just a single model
+- A golden-set evaluation harness (`npm run eval`) scoring retrieval precision, answer faithfulness (LLM-as-judge), and abstention accuracy against a fictional document designed so the model can't cheat with training-data knowledge
 
 **Conversations**
 - Multi-turn memory backed by Supabase, with auto-titled threads
@@ -137,6 +139,7 @@ agentic-rag-assistant/
 │   │   ├── app.js        # builds the Express app (no side effects - safe to import in tests)
 │   │   └── server.js     # actual boot entry point (app.js + app.listen())
 │   ├── test/              # HTTP-level route tests (Express + supertest, DB layer mocked)
+│   ├── eval/              # RAG evaluation harness (golden document + question set)
 │   └── supabase/         # SQL schema + migrations
 └── client/
     └── src/
@@ -239,6 +242,24 @@ cd client
 npm test          # run once
 npm run test:watch # watch mode while developing
 ```
+
+## Evaluation
+
+Everything above tests *code* - this tests whether the RAG pipeline is actually good at its job, which is a fundamentally different question that pure unit tests can't answer. It needs a running server and real provider keys (unlike every other test in this project, mocking the retrieval/generation here would make the "evaluation" measure nothing real), so it's a manual tool rather than a CI step:
+
+```bash
+cd server
+npm run dev      # in one terminal - the eval harness talks to a live server
+npm run eval     # in another terminal
+```
+
+It runs 14 golden questions against a small **fictional** document (`eval/golden-document.md` - an invented company, invented numbers) and scores three things:
+
+- **Retrieval** - deterministic check for whether the expected facts actually made it into the *retrieved chunks*, independent of what the LLM did with them. A low score here means the problem is retrieval, not generation.
+- **Faithfulness & completeness** - LLM-as-judge (Groq grades the system's own answer against what was retrieved). This is the same technique the app's own self-verification feature uses live, per-query - the eval harness just runs it offline, in batch, against a fixed known-answer set instead of one query at a time.
+- **Abstention accuracy** - a third of the golden set is deliberately *unanswerable* from the document, including one trap question that presupposes a fact never stated. Correct behavior is declining to answer, not guessing.
+
+The document is invented specifically so an LLM can't get questions right from its own training data - a real-world topic would make it impossible to tell whether the *system* is grounding its answers correctly or the *model* just already knew the answer. A full per-question report is written to `eval/last-report.json` after each run.
 
 ## Deployment
 

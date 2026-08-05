@@ -1,0 +1,95 @@
+[
+  {
+    "id": "fact-1",
+    "type": "fact_lookup",
+    "question": "When was Wrenfield Ledger first released?",
+    "expectedKeywords": ["March 2019", "2019"]
+  },
+  {
+    "id": "fact-2",
+    "type": "fact_lookup",
+    "question": "How many active business accounts does Wrenfield Ledger have?",
+    "expectedKeywords": ["41,000", "41000"]
+  },
+  {
+    "id": "fact-3",
+    "type": "fact_lookup",
+    "question": "What is the maximum number of transactions a single Ledger Thread can contain?",
+    "expectedKeywords": ["60"]
+  },
+  {
+    "id": "fact-4",
+    "type": "fact_lookup",
+    "question": "How much does the Team pricing tier cost per month?",
+    "expectedKeywords": ["$34", "34"]
+  },
+  {
+    "id": "fact-5",
+    "type": "fact_lookup",
+    "question": "Who is the CEO of Wrenfield Software?",
+    "expectedKeywords": ["Priya Ashworth"]
+  },
+  {
+    "id": "fact-6",
+    "type": "fact_lookup",
+    "question": "Does Wrenfield Ledger currently offer a 24/7 support tier?",
+    "expectedKeywords": ["no", "not"],
+    "note": "Deliberately a negative fact, not an abstention case - the document explicitly states there is no 24/7 tier. Tests whether the system reports a stated negative correctly instead of treating it as 'not covered'."
+  },
+  {
+    "id": "paraphrase-1",
+    "type": "paraphrase",
+    "question": "What's the accuracy of the receipt scanning for messy handwritten receipts?",
+    "expectedKeywords": ["88.1%", "88.1"],
+    "note": "Document says 'handwritten ones' - question paraphrases as 'messy handwritten receipts'."
+  },
+  {
+    "id": "paraphrase-2",
+    "type": "paraphrase",
+    "question": "Where is the company's main office located?",
+    "expectedKeywords": ["Leeds"],
+    "note": "Document says 'headquartered in Leeds, United Kingdom' - question paraphrases 'headquartered' as 'main office located'."
+  },
+  {
+    "id": "synthesis-1",
+    "type": "synthesis",
+    "question": "Which pricing tiers include the Ledger Threads feature?",
+    "expectedKeywords": ["Team", "Ledger Pro"],
+    "note": "Requires combining the per-tier feature list with the 'exclusive to Team and Ledger Pro' sentence."
+  },
+  {
+    "id": "synthesis-2",
+    "type": "synthesis",
+    "question": "How much total funding has Wrenfield Software raised, and who led each round?",
+    "expectedKeywords": ["2.1 million", "Marrow Street Capital", "9.6 million", "Kestrel Bridge Partners"],
+    "note": "Requires combining two separate funding-round sentences."
+  },
+  {
+    "id": "synthesis-3",
+    "type": "synthesis",
+    "question": "What technologies does Wrenfield Ledger's engineering stack use?",
+    "expectedKeywords": ["Kotlin", "PostgreSQL", "Rust", "Vue"],
+    "note": "Requires enumerating multiple technology facts from the Technical Architecture section."
+  },
+  {
+    "id": "abstain-1",
+    "type": "abstention",
+    "question": "Does Wrenfield Ledger have a mobile app?",
+    "shouldAbstain": true,
+    "note": "Never mentioned anywhere in the document - correct behavior is to say the document doesn't cover this, not guess."
+  },
+  {
+    "id": "abstain-2",
+    "type": "abstention",
+    "question": "What was Wrenfield Software's revenue last year?",
+    "shouldAbstain": true,
+    "note": "Only funding rounds are mentioned, never revenue - a model relying on general SaaS-industry knowledge might be tempted to guess here."
+  },
+  {
+    "id": "abstain-3",
+    "type": "abstention",
+    "question": "What programming language is the Wrenfield Ledger mobile app written in?",
+    "shouldAbstain": true,
+    "note": "A trap question - presupposes a mobile app exists (it's never mentioned), so even the premise is unsupported."
+  }
+]
