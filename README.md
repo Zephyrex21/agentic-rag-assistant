@@ -261,6 +261,8 @@ It runs 14 golden questions against a small **fictional** document (`eval/golden
 
 The document is invented specifically so an LLM can't get questions right from its own training data - a real-world topic would make it impossible to tell whether the *system* is grounding its answers correctly or the *model* just already knew the answer. A full per-question report is written to `eval/last-report.json` after each run.
 
+The judge uses `GENERATION_MODEL` by default (override with `EVAL_JUDGE_MODEL`), not the lighter `UTILITY_MODEL` - grading with several conditional criteria at once turned out to be a harder reasoning task than expected for a small/fast model, which tended to echo the prompt's example numbers verbatim instead of actually grading (a real bug caught by running this against a live server - every question scored an identical, suspicious 0%). The harness now also auto-flags that specific failure mode if it ever recurs, rather than silently reporting a degenerate result as if it were real.
+
 ## Deployment
 
 Two services to deploy: the Node/Express backend and the static Vite/React frontend build. Free tiers work fine for a personal project.

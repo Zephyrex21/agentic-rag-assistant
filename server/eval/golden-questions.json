@@ -9,7 +9,7 @@
     "id": "fact-2",
     "type": "fact_lookup",
     "question": "How many active business accounts does Wrenfield Ledger have?",
-    "expectedKeywords": ["41,000", "41000"]
+    "expectedKeywords": ["41,000"]
   },
   {
     "id": "fact-3",
@@ -33,7 +33,7 @@
     "id": "fact-6",
     "type": "fact_lookup",
     "question": "Does Wrenfield Ledger currently offer a 24/7 support tier?",
-    "expectedKeywords": ["no", "not"],
+    "expectedKeywords": ["no 24/7"],
     "note": "Deliberately a negative fact, not an abstention case - the document explicitly states there is no 24/7 tier. Tests whether the system reports a stated negative correctly instead of treating it as 'not covered'."
   },
   {

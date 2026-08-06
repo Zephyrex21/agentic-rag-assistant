@@ -35,7 +35,14 @@ const Groq = require('groq-sdk');
  */
 
 const SERVER_URL = process.env.EVAL_SERVER_URL || 'http://localhost:5000';
-const JUDGE_MODEL = process.env.UTILITY_MODEL || 'llama-3.1-8b-instant';
+// Deliberately GENERATION_MODEL, not UTILITY_MODEL - grading with several
+// conditional criteria at once (faithfulness AND completeness AND
+// correct-abstention-detection, with different rules depending on
+// question type) is a harder reasoning task than the simple utility jobs
+// (rewriting, reranking) UTILITY_MODEL is tuned for. A weaker judge model
+// tends to degrade toward copying literal placeholder-looking numbers
+// instead of actually reasoning through the grading criteria.
+const JUDGE_MODEL = process.env.EVAL_JUDGE_MODEL || process.env.GENERATION_MODEL || 'llama-3.3-70b-versatile';
 const GOLDEN_FILENAME = 'wrenfield-ledger-eval-doc.md';
 
 function loadGoldenQuestions() {
@@ -145,15 +152,17 @@ This question is ${item.shouldAbstain ? 'NOT answerable from the sources above -
 ${item.expectedKeywords ? `Expected key facts a complete answer should include: ${item.expectedKeywords.join(', ')}` : ''}
 
 Grade strictly on:
-1. faithfulness (0.0-1.0): are ALL factual claims in the answer actually stated in the retrieved sources? 1.0 = every claim is directly supported, 0.0 = fabricated or contradicts the sources. A correct abstention scores 1.0 here (nothing false was claimed).
-2. completeness (0.0-1.0): does the answer cover the expected key facts? For an abstention question, score 1.0 if it correctly declined, 0.0 if it guessed.
+1. faithfulness (a number from 0.0 to 1.0): are ALL factual claims in the answer actually stated in the retrieved sources? 1.0 = every claim is directly supported, 0.0 = fabricated or contradicts the sources. A correct abstention scores 1.0 here (nothing false was claimed).
+2. completeness (a number from 0.0 to 1.0): does the answer cover the expected key facts? For an abstention question, score 1.0 if it correctly declined, 0.0 if it guessed.
 3. correctlyAbstained: true if this was an abstention question AND the system correctly declined; false if it was an abstention question but the system guessed anyway; null if this isn't an abstention question at all.
 
-Respond with ONLY this JSON shape, nothing else:
-{"faithfulness": 0.0, "completeness": 0.0, "correctlyAbstained": true, "reasoning": "one short sentence"}`;
+You must actually calculate faithfulness and completeness yourself based on the specific question/sources/answer above - do not reuse numbers from any example. For instance, if you were grading a COMPLETELY UNRELATED case where an answer correctly and fully matched its sources, that unrelated example's grade might look like {"faithfulness": 0.92, "completeness": 0.85, "correctlyAbstained": null, "reasoning": "Covers most expected facts, one minor detail omitted."} - your actual numbers for THIS question will be different and depend entirely on what you read above.
+
+Respond with ONLY a JSON object in that same shape - no other text before or after it.`;
 }
 
 async function judgeAnswer(groq, item, sources, answer) {
+  let raw = '';
   try {
     const response = await groq.chat.completions.create({
       model: JUDGE_MODEL,
@@ -161,13 +170,14 @@ async function judgeAnswer(groq, item, sources, answer) {
       temperature: 0,
       max_completion_tokens: 200,
     });
-    const raw = response.choices?.[0]?.message?.content || '';
+    raw = response.choices?.[0]?.message?.content || '';
     const match = raw.match(/\{[\s\S]*\}/);
     if (!match) throw new Error('judge returned no parseable JSON');
-    return JSON.parse(match[0]);
+    const parsed = JSON.parse(match[0]);
+    return { ...parsed, _rawJudgeResponse: raw };
   } catch (err) {
     console.warn(`   ⚠️  Judge call failed for "${item.id}": ${err.message} - scoring this item as ungraded.`);
-    return { faithfulness: null, completeness: null, correctlyAbstained: null, reasoning: 'judge call failed' };
+    return { faithfulness: null, completeness: null, correctlyAbstained: null, reasoning: 'judge call failed', _rawJudgeResponse: raw };
   }
 }
 
@@ -219,6 +229,22 @@ async function main() {
   console.log(`Avg faithfulness:       ${fmtScore(avg(faithfulnessScores))}  (answers don't claim things the sources don't say)`);
   console.log(`Avg completeness:       ${fmtScore(avg(completenessScores))}  (answers cover the expected facts)`);
   console.log(`Abstention accuracy:    ${correctAbstentions}/${abstentionItems.length} correctly declined unanswerable questions`);
+
+  // Sanity check: if faithfulness/completeness are EXACTLY identical across
+  // (almost) every question, that's a strong signal the judge is copying a
+  // template value rather than actually grading - not a real result. This
+  // exact symptom (uniform 0% everywhere, even on high-retrieval and
+  // correctly-abstained questions) is what motivated this check.
+  const allIdentical = (arr) => arr.length >= 4 && arr.every((v) => v === arr[0]);
+  if (allIdentical(faithfulnessScores) || allIdentical(completenessScores)) {
+    console.log(
+      `\n⚠️  Every faithfulness/completeness score came back identical (${fmtScore(faithfulnessScores[0])}) - ` +
+        `that's very unlikely for real grades across ${results.length} different questions. This usually means the ` +
+        `judge model is echoing a placeholder value instead of actually grading. Check eval/last-report.json's ` +
+        `"_rawJudgeResponse" field for a few questions to see the judge's literal output, and consider trying a ` +
+        `different EVAL_JUDGE_MODEL if it persists.`
+    );
+  }
 
   const worstRetrieval = results
     .filter((r) => r.retrieval && r.retrieval.score < 1)
