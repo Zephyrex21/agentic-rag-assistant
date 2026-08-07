@@ -230,17 +230,22 @@ async function main() {
   console.log(`Avg completeness:       ${fmtScore(avg(completenessScores))}  (answers cover the expected facts)`);
   console.log(`Abstention accuracy:    ${correctAbstentions}/${abstentionItems.length} correctly declined unanswerable questions`);
 
-  // Sanity check: if faithfulness/completeness are EXACTLY identical across
-  // (almost) every question, that's a strong signal the judge is copying a
-  // template value rather than actually grading - not a real result. This
-  // exact symptom (uniform 0% everywhere, even on high-retrieval and
-  // correctly-abstained questions) is what motivated this check.
+  // Sanity check: the ACTUAL bug this caught was BOTH faithfulness AND
+  // completeness frozen at the same identical value across every question
+  // (echoing the prompt's example numbers instead of grading). One score
+  // alone being uniform is NOT suspicious by itself - e.g. faithfulness
+  // legitimately tends toward a uniform 100% on a well-grounded system
+  // (few/no fabricated claims) while completeness naturally varies with
+  // how thorough each individual answer happens to be. Only flag the
+  // specific pattern that's actually diagnostic: no variation in EITHER
+  // score at all, which is what "the judge stopped grading" looks like.
   const allIdentical = (arr) => arr.length >= 4 && arr.every((v) => v === arr[0]);
-  if (allIdentical(faithfulnessScores) || allIdentical(completenessScores)) {
+  if (allIdentical(faithfulnessScores) && allIdentical(completenessScores)) {
     console.log(
-      `\n⚠️  Every faithfulness/completeness score came back identical (${fmtScore(faithfulnessScores[0])}) - ` +
-        `that's very unlikely for real grades across ${results.length} different questions. This usually means the ` +
-        `judge model is echoing a placeholder value instead of actually grading. Check eval/last-report.json's ` +
+      `\n⚠️  Both faithfulness AND completeness came back identical for every question ` +
+        `(${fmtScore(faithfulnessScores[0])} / ${fmtScore(completenessScores[0])}) - zero variation across ` +
+        `${results.length} different questions in EITHER score is very unlikely for real grades. This usually means ` +
+        `the judge model is echoing a placeholder value instead of actually grading. Check eval/last-report.json's ` +
         `"_rawJudgeResponse" field for a few questions to see the judge's literal output, and consider trying a ` +
         `different EVAL_JUDGE_MODEL if it persists.`
     );
