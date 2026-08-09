@@ -34,8 +34,10 @@ function buildPrompt(question, chunks, history = [], revision = null) {
   const revisionBlock = revision
     ? `Your previous attempt at this answer was: "${revision.previousAnswer}"\n\n` +
       `That attempt had a problem: ${revision.issues}\n\n` +
-      `Write a corrected answer that fixes this. Be more conservative - if you're not sure ` +
-      `something is directly supported by the sources below, leave it out rather than guess.\n\n`
+      `Write a corrected answer that fixes this. Be more careful about which claims are actually ` +
+      `supported by the sources below - if you're not sure something is directly stated, leave it out ` +
+      `rather than guess. This is about accuracy, not brevity: the corrected answer should still be as ` +
+      `thorough as the question deserves, just without the unsupported claim(s).\n\n`
     : '';
 
   return `You are a knowledge assistant answering questions using ONLY the source excerpts below. Follow these rules strictly:
@@ -43,7 +45,7 @@ function buildPrompt(question, chunks, history = [], revision = null) {
 1. Answer using only information found in the sources. Do not use outside knowledge.
 2. If the sources don't contain enough information to answer, say so clearly instead of guessing.
 3. When you use information from a source, mention it inline like "(Source 1)" or "(Source 2)" so the person can trace where each part of the answer came from.
-4. Be concise and direct. Do not pad the answer with filler.
+4. Match the length and depth of your answer to what the question actually asks for. A narrow factual question ("what year", "how much") deserves a short, direct answer - a sentence or two. A broad question (e.g. "summarize this", "explain X", "what does this document cover", "tell me about...") deserves a thorough, well-organized answer that actually covers the relevant material - multiple paragraphs if the sources support it. Never compress a genuinely broad question down to one line just to be brief, and never pad a narrow question with filler just to sound thorough - match the answer to the question, not a fixed length.
 5. If the conversation so far gives context for this question (e.g. "it", "that", "the second one"), use it to understand what's being asked - but still answer only from the sources below.
 
 ${historyBlock}${revisionBlock}SOURCES:
@@ -70,7 +72,7 @@ async function generateAnswer(question, chunks, history = [], revision = null) {
         model,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.2, // low temperature - we want grounded, consistent answers, not creative ones
-        max_completion_tokens: 1024,
+        max_completion_tokens: 1600,
       })
     );
     const text = response.choices?.[0]?.message?.content;
@@ -85,7 +87,7 @@ async function generateAnswer(question, chunks, history = [], revision = null) {
           model: MISTRAL_FALLBACK_MODEL,
           messages: [{ role: 'user', content: prompt }],
           temperature: 0.2,
-          max_tokens: 1024,
+          max_tokens: 1600,
         });
         const text = response.choices?.[0]?.message?.content;
         if (!text) throw new Error('Mistral returned an empty response.');
@@ -127,7 +129,7 @@ async function* generateAnswerStream(question, chunks, history = [], revision = 
           model,
           messages,
           temperature: 0.2,
-          max_completion_tokens: 1024,
+          max_completion_tokens: 1600,
           stream: true,
         }),
     }));
@@ -141,7 +143,7 @@ async function* generateAnswerStream(question, chunks, history = [], revision = 
           model: MISTRAL_FALLBACK_MODEL,
           messages,
           temperature: 0.2,
-          max_tokens: 1024,
+          max_tokens: 1600,
           stream: true,
         }),
     });
