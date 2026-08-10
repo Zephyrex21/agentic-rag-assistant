@@ -44,7 +44,8 @@ A full-stack retrieval-augmented generation system where every answer traces bac
 Most RAG tutorials stop at "embed chunks, do a vector search, stuff into a prompt." That approach has a well-known failure mode: pure vector similarity misses exact matches (product names, numbers, specific phrases), and there's no check on whether the retrieved chunks actually answer the question. This project addresses both directly:
 
 - **Hybrid retrieval** — vector search (Pinecone) and keyword search (Postgres full-text) run in parallel and get fused with Reciprocal Rank Fusion, so a chunk that's a strong match on *either* signal surfaces correctly
-- **LLM reranking** — a single batched call re-judges the fused candidates for genuine relevance, not just similarity score, before anything reaches the answering model
+- **Multi-query retrieval** — the query is expanded into a couple of alternate phrasings, each searched independently and fused together with everything else, so wording mismatches between the question and the document's vocabulary don't silently lose recall
+- **LLM reranking** — a single batched call re-judges the fused, deduplicated candidates for genuine relevance, not just similarity score, before anything reaches the answering model
 - **Query rewriting** — follow-up questions ("what about the second one?") get expanded into standalone queries using conversation history before retrieval runs
 - **Self-verification** — after an answer is generated, a separate check asks whether it's actually supported by the cited sources. If not, one corrected revision streams in as a visible replacement, with the specific problem fed back into the prompt — not a silent retry
 - **Verifiable citations** — every claim in an answer links back to the exact source chunk, with the model's own citation graph reflected in the UI (used vs. merely-retrieved sources are shown separately)
@@ -65,13 +66,12 @@ Most RAG tutorials stop at "embed chunks, do a vector search, stuff into a promp
 flowchart LR
     Q[Question] --> RW{Has history?}
     RW -->|yes| RWQ[Rewrite as<br/>standalone query]
-    RW -->|no| EMB
-    RWQ --> EMB[Embed query]
-    EMB --> VEC[Vector search<br/>Pinecone]
-    EMB --> KW[Keyword search<br/>Postgres full-text]
-    VEC --> FUSE[Reciprocal Rank<br/>Fusion]
-    KW --> FUSE
-    FUSE --> RERANK[LLM Reranking]
+    RW -->|no| EXP
+    RWQ --> EXP[Generate 2 alternate<br/>phrasings]
+    EXP --> SEARCH[Hybrid search per<br/>query variant]
+    SEARCH --> FUSE[Reciprocal Rank<br/>Fusion, N lists]
+    FUSE --> DEDUP[Drop near-duplicate<br/>chunks]
+    DEDUP --> RERANK[LLM Reranking<br/>adaptive top-K]
     RERANK --> GEN[Answer generation<br/>+ streaming]
     GEN --> VERIFY{Self-verification:<br/>supported by sources?}
     VERIFY -->|yes| OUT[Cited answer]
@@ -82,9 +82,13 @@ flowchart LR
 ## Key Features
 
 **Retrieval & answering**
-- Structure-aware document chunking (markdown-header-aware, word-window fallback for plain text/PDF)
+- Structure-aware document chunking (markdown-header-aware, word-window fallback for plain text/PDF), with chunk boundaries snapped to the nearest sentence ending instead of cutting strictly mid-sentence
+- Multi-query retrieval — the query is expanded into alternate phrasings that each run hybrid search independently, all fused together with RRF (which fuses N ranked lists, not just two), so wording that doesn't match the document's exact vocabulary still has other angles to land on
+- Near-duplicate chunk removal before reranking (cheap word-overlap check, no extra API calls) — keeps the reranker's limited candidate budget from being spent on repeat passages, which multi-query retrieval makes more likely
+- Adaptive top-K — broad questions ("summarize", "compare X and Y", "give me an overview") automatically pull more source chunks than narrow factual ones, via a zero-latency keyword heuristic
 - Hybrid search fused with RRF, LLM reranking with a rescue safety net for broad/overview questions
 - Self-verification with a single visible revision pass — answers are checked against their own cited sources after generation
+- Generation prompt tuned for per-claim citation density and cross-source synthesis, not just source-by-source restatement
 - Streaming responses via Server-Sent Events — answers appear token-by-token
 - Cross-family model fallback (generation/utility calls automatically retry on a different model family if the primary is decommissioned - see `modelFallback.js`), plus a separate provider-level fallback (Mistral) if Groq itself is unreachable, not just a single model
 - A golden-set evaluation harness (`npm run eval`) scoring retrieval precision, answer faithfulness (LLM-as-judge), and abstention accuracy against a fictional document designed so the model can't cheat with training-data knowledge
@@ -186,7 +190,10 @@ All configuration lives in `server/.env` (see `.env.example` for the full list w
 | `GROQ_API_KEY` | Single shared key for generation/reranking/rewriting/verification — Groq rate-limits per organization, not per key, so there's no benefit to splitting this |
 | `JINA_API_KEY` | Embeddings key — kept on a separate provider from Groq since Groq doesn't have a reliably documented embeddings API |
 | `MISTRAL_API_KEY` | Optional provider-level fallback if Groq is entirely unreachable — unset simply skips this, no code changes needed |
-| `ENABLE_HYBRID_SEARCH`, `ENABLE_RERANKING`, `ENABLE_QUERY_REWRITE`, `ENABLE_SELF_VERIFICATION` | Toggle any pipeline stage independently, no code changes needed |
+| `ENABLE_HYBRID_SEARCH`, `ENABLE_RERANKING`, `ENABLE_QUERY_REWRITE`, `ENABLE_QUERY_EXPANSION`, `ENABLE_DEDUPLICATION`, `ENABLE_ADAPTIVE_TOPK`, `ENABLE_SELF_VERIFICATION` | Toggle any pipeline stage independently, no code changes needed |
+| `QUERY_EXPANSION_COUNT` | How many alternate phrasings to generate for multi-query retrieval (0 disables it) |
+| `DEDUP_SIMILARITY_THRESHOLD` | Word-overlap threshold above which two candidate chunks are treated as near-duplicates |
+| `ADAPTIVE_TOPK_BONUS` | Extra chunks retrieved for broad/summary-style questions on top of `RETRIEVAL_TOP_K` |
 | `RETRIEVAL_TOP_K`, `RETRIEVAL_CANDIDATE_POOL` | Tune how many chunks are considered vs. sent to the model |
 | `GENERATION_MODEL_FALLBACK`, `UTILITY_MODEL_FALLBACK` | Automatic fallback models if a primary model is deprecated/unavailable |
 
@@ -215,13 +222,16 @@ The backend includes standalone test suites for all pure/testable logic — no A
 
 ```bash
 cd server
-npm run test:chunking      # chunking strategy correctness
+npm run test:chunking      # chunking strategy correctness, incl. sentence-boundary snapping
 npm run test:rrf           # Reciprocal Rank Fusion logic
 npm run test:reranker      # reranker response parsing, including malformed model output
 npm run test:citations     # citation extraction from answer text
 npm run test:modelfallback # model deprecation fallback behavior
 npm run test:verification  # self-verification response parsing, fail-open behavior
 npm run test:prompt        # prompt construction, with/without conversation history
+npm run test:dedup         # near-duplicate chunk removal
+npm run test:queryexpansion # multi-query expansion response parsing
+npm run test:adaptive-topk # broad-vs-narrow question topK classification
 ```
 
 A second layer tests the HTTP route handlers themselves (Express + [supertest](https://github.com/ladjs/supertest)), covering request validation, status codes, and error-path behavior (e.g. a document delete that still succeeds even if the Pinecone cleanup call fails, or a conversation that only gets auto-titled on its first message, not every message). The DB and provider layers are mocked with `node:test`'s built-in `t.mock.method()` — no live Supabase/Pinecone/Groq calls, so like everything else here it runs green with zero secrets configured:
@@ -303,8 +313,9 @@ By default the backend accepts requests from any origin (fine for local dev and 
 
 ## Roadmap
 
-- Evaluation harness — automated retrieval precision/recall and answer faithfulness scoring against a golden question set
-- Production hardening — rate limiting, auth, structured observability
+- Pipeline observability — a per-query trace (rewrite → expansion → retrieval → fusion → dedup → rerank → generation → verification) surfaced in an inspectable panel, not just server logs
+- Truly agentic retrieval — replace the fixed pipeline with a tool-calling loop that decides whether/how many times to search, instead of always running the same fixed sequence once
+- Production hardening — rate limiting, auth
 
 ## License
 

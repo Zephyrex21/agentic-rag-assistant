@@ -44,9 +44,11 @@ function buildPrompt(question, chunks, history = [], revision = null) {
 
 1. Answer using only information found in the sources. Do not use outside knowledge.
 2. If the sources don't contain enough information to answer, say so clearly instead of guessing.
-3. When you use information from a source, mention it inline like "(Source 1)" or "(Source 2)" so the person can trace where each part of the answer came from.
+3. When you use information from a source, mention it inline like "(Source 1)" or "(Source 2)" right next to the specific claim it supports - not bunched into one citation dump at the end of the answer. If a claim draws on more than one source, cite all of them together, e.g. "(Source 1, Source 3)".
 4. Match the length and depth of your answer to what the question actually asks for. A narrow factual question ("what year", "how much") deserves a short, direct answer - a sentence or two. A broad question (e.g. "summarize this", "explain X", "what does this document cover", "tell me about...") deserves a thorough, well-organized answer that actually covers the relevant material - multiple paragraphs if the sources support it. Never compress a genuinely broad question down to one line just to be brief, and never pad a narrow question with filler just to sound thorough - match the answer to the question, not a fixed length.
-5. If the conversation so far gives context for this question (e.g. "it", "that", "the second one"), use it to understand what's being asked - but still answer only from the sources below.
+5. When multiple sources touch the same point, synthesize them into one coherent answer instead of restating each source in its own separate sentence or paragraph - the sources are raw material to reason over, not a list to transcribe in order.
+6. Default to clear prose. Only reach for a bulleted or numbered list when the sources themselves describe something inherently listlike (steps, options, specifications, a set of named items) - don't bullet-ify an answer that's naturally a few connected sentences.
+7. If the conversation so far gives context for this question (e.g. "it", "that", "the second one"), use it to understand what's being asked - but still answer only from the sources below.
 
 ${historyBlock}${revisionBlock}SOURCES:
 ${context}

@@ -3,9 +3,42 @@ const path = require('path');
 const DEFAULT_CHUNK_SIZE = parseInt(process.env.CHUNK_SIZE_WORDS || '350', 10);
 const DEFAULT_OVERLAP = parseInt(process.env.CHUNK_OVERLAP_WORDS || '50', 10);
 
+// A word ending in ./!/? (optionally followed by a closing quote/paren) is
+// treated as a sentence boundary.
+const SENTENCE_END_RE = /[.!?][)'"\u201d]?$/;
+// How far past a hard word-count cut we'll look for a clean sentence
+// boundary before giving up and using the hard cut anyway. Bounded
+// deliberately - this is a quality nudge, not a license to let one chunk
+// balloon in size on text with no terminal punctuation nearby (code blocks,
+// data dumps, etc).
+const SENTENCE_SNAP_LOOKAHEAD = 40;
+
 /**
- * Slides a fixed-size, overlapping window over a block of text (by word count).
- * Returns an array of plain-text chunk strings.
+ * Nudges a word-count-based cut point forward to the nearest sentence
+ * ending within SENTENCE_SNAP_LOOKAHEAD words, so chunks - and the
+ * excerpts/citations built directly from them - read as complete thoughts
+ * instead of stopping mid-sentence. Falls back to the original hard cut if
+ * no sentence boundary appears within the lookahead window, so this never
+ * grows a chunk unboundedly on text without punctuation.
+ */
+function snapToSentenceBoundary(words, hardEnd) {
+  if (hardEnd >= words.length) return hardEnd;
+  if (SENTENCE_END_RE.test(words[hardEnd - 1])) return hardEnd; // already lands cleanly
+
+  const limit = Math.min(words.length, hardEnd + SENTENCE_SNAP_LOOKAHEAD);
+  for (let i = hardEnd; i < limit; i++) {
+    if (SENTENCE_END_RE.test(words[i])) {
+      return i + 1; // include this word - boundary sits right after it
+    }
+  }
+  return hardEnd; // no nearby sentence boundary, don't grow the chunk further
+}
+
+/**
+ * Slides a fixed-size, overlapping window over a block of text (by word
+ * count), snapping each cut point to the nearest sentence boundary rather
+ * than slicing strictly mid-sentence. Returns an array of plain-text chunk
+ * strings.
  */
 function splitIntoWordWindows(text, chunkSizeWords = DEFAULT_CHUNK_SIZE, overlapWords = DEFAULT_OVERLAP) {
   const words = text.split(/\s+/).filter(Boolean);
@@ -15,9 +48,10 @@ function splitIntoWordWindows(text, chunkSizeWords = DEFAULT_CHUNK_SIZE, overlap
   const chunks = [];
   let start = 0;
   while (start < words.length) {
-    const end = Math.min(start + chunkSizeWords, words.length);
+    const hardEnd = Math.min(start + chunkSizeWords, words.length);
+    const end = snapToSentenceBoundary(words, hardEnd);
     chunks.push(words.slice(start, end).join(' '));
-    if (end === words.length) break;
+    if (end >= words.length) break;
     start = end - overlapWords; // step back for overlap
   }
   return chunks;
@@ -102,4 +136,4 @@ function chunkDocument(text, filename, options = {}) {
   return chunkPlainText(cleaned, opts);
 }
 
-module.exports = { chunkDocument, splitIntoWordWindows };
+module.exports = { chunkDocument, splitIntoWordWindows, snapToSentenceBoundary };

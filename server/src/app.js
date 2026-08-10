@@ -55,8 +55,11 @@ app.get('/health', (req, res) => {
     supabaseConfigured: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY),
     pipeline: {
       queryRewrite: process.env.ENABLE_QUERY_REWRITE !== 'false',
+      queryExpansion: process.env.ENABLE_QUERY_EXPANSION !== 'false',
       hybridSearch: process.env.ENABLE_HYBRID_SEARCH !== 'false',
       reranking: process.env.ENABLE_RERANKING !== 'false',
+      deduplication: process.env.ENABLE_DEDUPLICATION !== 'false',
+      adaptiveTopK: process.env.ENABLE_ADAPTIVE_TOPK !== 'false',
       selfVerification: process.env.ENABLE_SELF_VERIFICATION !== 'false',
     },
     ...(modelWarnings.length > 0 ? { modelWarnings } : {}),
