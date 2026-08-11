@@ -43,6 +43,7 @@ router.post('/', async (req, res) => {
     let finalSources = [];
     let verified = true;
     let wasRevised = false;
+    let trace = null;
 
     for await (const event of rag.retrieveAndAnswerStream(question, { documentIds })) {
       if (clientDisconnected) break;
@@ -57,12 +58,14 @@ router.post('/', async (req, res) => {
         writeSseEvent(res, 'chunk', { text: event.text });
       } else if (event.type === 'no_info') {
         finalAnswer = event.answer;
+        trace = event.trace ?? null;
         writeSseEvent(res, 'chunk', { text: event.answer });
       } else if (event.type === 'done') {
         finalAnswer = event.answer;
         finalSources = event.sources;
         verified = event.verified ?? true;
         wasRevised = event.wasRevised ?? false;
+        trace = event.trace ?? null;
       }
     }
 
@@ -73,6 +76,7 @@ router.post('/', async (req, res) => {
       sources: finalSources,
       verified,
       wasRevised,
+      trace,
       queryId: randomUUID(),
     });
     res.end();

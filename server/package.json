@@ -20,6 +20,7 @@
     "test:dedup": "node src/utils/test-dedup.js",
     "test:queryexpansion": "node src/utils/test-queryexpansion.js",
     "test:adaptive-topk": "node src/utils/test-adaptive-topk.js",
+    "test:tracebuilder": "node src/utils/test-tracebuilder.js",
     "test:routes": "node --test \"test/*.test.js\"",
     "eval": "node eval/run-eval.js",
     "diagnose:keys": "node src/utils/diagnose-api-keys.js"

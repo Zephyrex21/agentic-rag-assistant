@@ -3,6 +3,7 @@ import { ChevronDown, Sparkles, Search, ShieldCheck, ShieldAlert, RotateCcw } fr
 import { useState } from 'react';
 import { AnswerText } from '../citations/AnswerText';
 import { CitationBadge } from '../citations/CitationBadge';
+import { PipelineInspectorTrigger } from '../inspector/PipelineInspector';
 import type { Message } from '../../lib/types';
 
 export function MessageBubble({ message }: { message: Message }) {
@@ -67,6 +68,7 @@ export function MessageBubble({ message }: { message: Message }) {
                 <div className="mt-2 flex flex-wrap items-center gap-3">
                   {sources.length > 0 && <SourcesSummary citedCount={cited.length} uncited={uncited} />}
                   <VerificationBadge verified={message.verified} wasRevised={message.wasRevised} />
+                  {message.pipelineTrace && <PipelineInspectorTrigger trace={message.pipelineTrace} />}
                 </div>
               )}
             </motion.div>

@@ -92,6 +92,7 @@ flowchart LR
 - Streaming responses via Server-Sent Events — answers appear token-by-token
 - Cross-family model fallback (generation/utility calls automatically retry on a different model family if the primary is decommissioned - see `modelFallback.js`), plus a separate provider-level fallback (Mistral) if Groq itself is unreachable, not just a single model
 - A golden-set evaluation harness (`npm run eval`) scoring retrieval precision, answer faithfulness (LLM-as-judge), and abstention accuracy against a fictional document designed so the model can't cheat with training-data knowledge
+- **Pipeline observability** — every answer carries a stage-by-stage trace (rewrite → expansion → retrieval → dedup → rerank → generation → verification, each with timing and its key decisions) built from data the pipeline already produces, at no extra API cost. Inspectable per-message in the UI (see below), not just in server logs
 
 **Conversations**
 - Multi-turn memory backed by Supabase, with auto-titled threads
@@ -106,6 +107,7 @@ flowchart LR
 **Citations**
 - Inline citation badges that expand into source cards (excerpt, full text, relevance score, chunk index)
 - Distinguishes sources the model actually cited from ones merely retrieved
+- A "Pipeline Trace" inspector on every answer — a vertical timeline of every stage the pipeline ran, with per-stage timing, a proportional duration bar, and stage-specific detail (the rewritten query, generated variants, retrieval hit counts, which candidates the reranker kept vs. dropped, the self-verification verdict) — turns the architecture diagram above into something you can click into per-query instead of only reading in server logs
 
 **Frontend**
 - Custom "Ledger" design system — a research-ledger/evidence-desk aesthetic (cool sage paper tones, verdigris + rust-sienna dual accents, Newsreader serif + Public Sans + JetBrains Mono) built deliberately away from the cream-and-one-accent look most AI-generated UIs default to; full light/dark theming with zero flash on load
@@ -159,7 +161,7 @@ agentic-rag-assistant/
 Free-tier accounts for [Groq](https://console.groq.com/keys) (no credit card required), [Jina AI](https://jina.ai/embeddings/), [Pinecone](https://app.pinecone.io), and [Supabase](https://supabase.com) — no paid tier required anywhere.
 
 ### 1. Supabase setup
-Run `server/supabase/schema.sql`, then `server/supabase/migration_002_hybrid_search.sql`, then `server/supabase/migration_003_self_verification.sql`, then `server/supabase/migration_004_document_folders.sql` in the Supabase SQL Editor.
+Run `server/supabase/schema.sql`, then `server/supabase/migration_002_hybrid_search.sql`, then `server/supabase/migration_003_self_verification.sql`, then `server/supabase/migration_004_document_folders.sql`, then `server/supabase/migration_005_pipeline_trace.sql` in the Supabase SQL Editor.
 
 ### 2. Pinecone setup
 Create an index named to match `PINECONE_INDEX_NAME`, with **dimension 768** and **cosine** metric.
@@ -190,7 +192,7 @@ All configuration lives in `server/.env` (see `.env.example` for the full list w
 | `GROQ_API_KEY` | Single shared key for generation/reranking/rewriting/verification — Groq rate-limits per organization, not per key, so there's no benefit to splitting this |
 | `JINA_API_KEY` | Embeddings key — kept on a separate provider from Groq since Groq doesn't have a reliably documented embeddings API |
 | `MISTRAL_API_KEY` | Optional provider-level fallback if Groq is entirely unreachable — unset simply skips this, no code changes needed |
-| `ENABLE_HYBRID_SEARCH`, `ENABLE_RERANKING`, `ENABLE_QUERY_REWRITE`, `ENABLE_QUERY_EXPANSION`, `ENABLE_DEDUPLICATION`, `ENABLE_ADAPTIVE_TOPK`, `ENABLE_SELF_VERIFICATION` | Toggle any pipeline stage independently, no code changes needed |
+| `ENABLE_HYBRID_SEARCH`, `ENABLE_RERANKING`, `ENABLE_QUERY_REWRITE`, `ENABLE_QUERY_EXPANSION`, `ENABLE_DEDUPLICATION`, `ENABLE_ADAPTIVE_TOPK`, `ENABLE_SELF_VERIFICATION`, `ENABLE_PIPELINE_TRACE` | Toggle any pipeline stage independently, no code changes needed |
 | `QUERY_EXPANSION_COUNT` | How many alternate phrasings to generate for multi-query retrieval (0 disables it) |
 | `DEDUP_SIMILARITY_THRESHOLD` | Word-overlap threshold above which two candidate chunks are treated as near-duplicates |
 | `ADAPTIVE_TOPK_BONUS` | Extra chunks retrieved for broad/summary-style questions on top of `RETRIEVAL_TOP_K` |
@@ -232,6 +234,7 @@ npm run test:prompt        # prompt construction, with/without conversation hist
 npm run test:dedup         # near-duplicate chunk removal
 npm run test:queryexpansion # multi-query expansion response parsing
 npm run test:adaptive-topk # broad-vs-narrow question topK classification
+npm run test:tracebuilder  # pipeline trace formatting, incl. no_info/rescue/disabled-stage shapes
 ```
 
 A second layer tests the HTTP route handlers themselves (Express + [supertest](https://github.com/ladjs/supertest)), covering request validation, status codes, and error-path behavior (e.g. a document delete that still succeeds even if the Pinecone cleanup call fails, or a conversation that only gets auto-titled on its first message, not every message). The DB and provider layers are mocked with `node:test`'s built-in `t.mock.method()` — no live Supabase/Pinecone/Groq calls, so like everything else here it runs green with zero secrets configured:
@@ -313,7 +316,6 @@ By default the backend accepts requests from any origin (fine for local dev and 
 
 ## Roadmap
 
-- Pipeline observability — a per-query trace (rewrite → expansion → retrieval → fusion → dedup → rerank → generation → verification) surfaced in an inspectable panel, not just server logs
 - Truly agentic retrieval — replace the fixed pipeline with a tool-calling loop that decides whether/how many times to search, instead of always running the same fixed sequence once
 - Production hardening — rate limiting, auth
 

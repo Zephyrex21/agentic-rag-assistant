@@ -1,0 +1,286 @@
+import * as Dialog from '@radix-ui/react-dialog';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  Workflow,
+  Wand2,
+  GitBranch,
+  Search,
+  Layers,
+  ListFilter,
+  Sparkles,
+  ShieldCheck,
+  ShieldAlert,
+  X,
+  ArrowRight,
+  LifeBuoy,
+} from 'lucide-react';
+import { useState } from 'react';
+import type { PipelineTrace, TraceStage, TraceChunkRef } from '../../lib/types';
+
+const STAGE_ICONS: Record<TraceStage['key'], React.ComponentType<{ size?: number }>> = {
+  rewrite: Wand2,
+  expansion: GitBranch,
+  retrieval: Search,
+  dedup: Layers,
+  rerank: ListFilter,
+  generation: Sparkles,
+  verification: ShieldCheck,
+};
+
+function formatMs(ms: number) {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/** Small non-interactive chunk reference chip - used for the rerank stage's kept/dropped lists. */
+function ChunkChip({ chunk, tone }: { chunk: TraceChunkRef; tone: 'kept' | 'dropped' }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[10px]"
+      style={
+        tone === 'kept'
+          ? { background: 'color-mix(in srgb, var(--accent) 10%, transparent)', color: 'var(--accent)' }
+          : { background: 'var(--surface)', color: 'var(--ink-muted)', textDecoration: 'line-through' }
+      }
+      title={chunk.section ? `${chunk.filename} - ${chunk.section}` : chunk.filename}
+    >
+      {chunk.filename}
+      <span className="opacity-70">#{chunk.chunkIndex}</span>
+    </span>
+  );
+}
+
+function StageDetail({ stage }: { stage: TraceStage }) {
+  const d = stage.data;
+
+  if (stage.key === 'rewrite') {
+    if (!d.enabled) return <p className="text-xs text-ink-muted">Disabled - the raw question is searched as-is.</p>;
+    if (!d.changed) return <p className="text-xs text-ink-muted">No conversation history to rewrite from, or no change was needed.</p>;
+    return (
+      <div className="flex flex-col gap-1 text-xs">
+        <p className="text-ink-muted">
+          <span className="font-mono text-[10px] uppercase tracking-wide">original</span> · {d.original}
+        </p>
+        <p className="flex items-center gap-1.5 text-ink">
+          <ArrowRight size={11} className="shrink-0 text-accent" />
+          {d.rewritten}
+        </p>
+      </div>
+    );
+  }
+
+  if (stage.key === 'expansion') {
+    if (!d.enabled) return <p className="text-xs text-ink-muted">Disabled - only the original query was searched.</p>;
+    if (!d.variants || d.variants.length === 0) return <p className="text-xs text-ink-muted">No variants generated - searched with the original query only.</p>;
+    return (
+      <ul className="flex flex-col gap-1 text-xs text-ink">
+        {d.variants.map((v, i) => (
+          <li key={i} className="flex items-start gap-1.5">
+            <span className="mt-0.5 shrink-0 font-mono text-[10px] text-ink-muted">{i + 1}</span>
+            {v}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  if (stage.key === 'retrieval') {
+    return (
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+        <Stat label="Query variants searched" value={d.queryVariantCount} />
+        <Stat label="Vector hits" value={d.vectorHits} />
+        <Stat label="Keyword hits" value={d.hybridSearchEnabled ? d.keywordHits : 'disabled'} />
+        <Stat label="Fused candidates" value={d.fusedCandidates} />
+      </div>
+    );
+  }
+
+  if (stage.key === 'dedup') {
+    if (!d.enabled) return <p className="text-xs text-ink-muted">Disabled - no near-duplicate filtering applied.</p>;
+    return (
+      <div className="grid grid-cols-3 gap-x-4 gap-y-1 text-xs">
+        <Stat label="Before" value={d.before} />
+        <Stat label="After" value={d.after} />
+        <Stat label="Removed" value={d.removed} tone={d.removed && d.removed > 0 ? 'highlight' : undefined} />
+      </div>
+    );
+  }
+
+  if (stage.key === 'rerank') {
+    return (
+      <div className="flex flex-col gap-2 text-xs">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+          <Stat label="Candidates in" value={d.candidatesIn} />
+          <Stat label="Top-K" value={d.adaptiveTopKApplied ? `${d.topK} (widened from ${d.baseTopK})` : d.topK} />
+        </div>
+        {d.rescueTriggered && (
+          <p className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]" style={{ background: 'color-mix(in srgb, var(--highlight) 10%, transparent)', color: 'var(--highlight)' }}>
+            <LifeBuoy size={11} className="shrink-0" />
+            Reranker rejected everything - rescued using the unranked top candidates instead.
+          </p>
+        )}
+        {d.kept && d.kept.length > 0 && (
+          <div>
+            <p className="mb-1 font-mono text-[10px] uppercase tracking-wide text-ink-muted">used for the answer</p>
+            <div className="flex flex-wrap gap-1">
+              {d.kept.map((c, i) => <ChunkChip key={i} chunk={c} tone="kept" />)}
+            </div>
+          </div>
+        )}
+        {d.dropped && d.dropped.length > 0 && (
+          <div>
+            <p className="mb-1 font-mono text-[10px] uppercase tracking-wide text-ink-muted">passed over</p>
+            <div className="flex flex-wrap gap-1">
+              {d.dropped.map((c, i) => <ChunkChip key={i} chunk={c} tone="dropped" />)}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (stage.key === 'generation') {
+    return (
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+        <Stat label="Source chunks used" value={d.chunksUsed} />
+        <Stat label="Answer length" value={d.answerLength ? `${d.answerLength} chars` : undefined} />
+      </div>
+    );
+  }
+
+  if (stage.key === 'verification') {
+    return (
+      <div className="flex flex-col gap-1.5 text-xs">
+        <p className="flex items-center gap-1.5" style={{ color: d.passed ? 'var(--accent)' : 'var(--highlight)' }}>
+          {d.passed ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
+          {d.passed ? 'Answer supported by its sources' : 'Unsupported claim detected'}
+        </p>
+        {d.issue && <p className="text-ink-muted">"{d.issue}"</p>}
+        {d.wasRevised && (
+          <p className="text-ink-muted">
+            Revised in {formatMs(d.revisionGenerationMs || 0)} and re-checked.
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function Stat({ label, value, tone }: { label: string; value: string | number | undefined; tone?: 'highlight' }) {
+  if (value === undefined) return null;
+  return (
+    <div>
+      <p className="font-mono text-[10px] uppercase tracking-wide text-ink-muted">{label}</p>
+      <p className="text-sm" style={tone === 'highlight' ? { color: 'var(--highlight)' } : { color: 'var(--ink)' }}>
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function StageRow({ stage, totalMs, isLast }: { stage: TraceStage; totalMs: number; isLast: boolean }) {
+  const Icon = STAGE_ICONS[stage.key];
+  const widthPct = totalMs > 0 ? Math.max(2, Math.min(100, (stage.durationMs / totalMs) * 100)) : 0;
+
+  return (
+    <div className="relative flex gap-3 pb-5">
+      {!isLast && <div className="absolute left-[13px] top-7 bottom-0 w-px" style={{ background: 'var(--border-color)' }} />}
+      <div
+        className="relative z-10 mt-0.5 flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full"
+        style={{
+          background: 'color-mix(in srgb, var(--accent) 12%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--accent) 35%, transparent)',
+          color: 'var(--accent)',
+        }}
+      >
+        <Icon size={12} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-medium text-ink">{stage.label}</p>
+          <span className="shrink-0 font-mono text-[11px] text-ink-muted">{formatMs(stage.durationMs)}</span>
+        </div>
+        <div className="mt-1 mb-2 h-1 w-full overflow-hidden rounded-full" style={{ background: 'var(--surface)' }}>
+          <div className="h-full rounded-full" style={{ width: `${widthPct}%`, background: 'var(--accent)', opacity: 0.5 }} />
+        </div>
+        <StageDetail stage={stage} />
+      </div>
+    </div>
+  );
+}
+
+export function PipelineInspectorTrigger({ trace }: { trace: PipelineTrace }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Dialog.Root open={open} onOpenChange={setOpen}>
+      <Dialog.Trigger asChild>
+        <button
+          type="button"
+          className="flex items-center gap-1 text-xs text-ink-muted cursor-pointer hover:text-accent transition-colors"
+        >
+          <Workflow size={12} />
+          Inspect pipeline
+          <span className="font-mono text-[10px] opacity-70">({formatMs(trace.totalMs)})</span>
+        </button>
+      </Dialog.Trigger>
+      <AnimatePresence>
+        {open && (
+          <Dialog.Portal forceMount>
+            <Dialog.Overlay asChild>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="fixed inset-0 z-[100] bg-overlay"
+              />
+            </Dialog.Overlay>
+            <Dialog.Content asChild aria-describedby={undefined}>
+              <motion.div
+                initial={{ opacity: 0, scale: 0.96, y: -8 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96, y: -8 }}
+                transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                className="fixed left-1/2 top-[8vh] z-[101] max-h-[84vh] w-[92vw] max-w-xl -translate-x-1/2 overflow-y-auto rounded-2xl"
+              >
+                <div className="glass-panel rounded-2xl p-5">
+                  <div className="mb-4 flex items-center justify-between">
+                    <div>
+                      <Dialog.Title className="text-sm font-semibold text-ink">Pipeline Trace</Dialog.Title>
+                      <p className="font-mono text-[11px] text-ink-muted">
+                        {trace.stages.length} stages · {formatMs(trace.totalMs)} total
+                      </p>
+                    </div>
+                    <Dialog.Close asChild>
+                      <button type="button" className="cursor-pointer text-ink-muted hover:text-ink" aria-label="Close">
+                        <X size={16} />
+                      </button>
+                    </Dialog.Close>
+                  </div>
+
+                  {trace.noInfo && (
+                    <p
+                      className="mb-4 rounded-md px-2.5 py-1.5 text-[11px]"
+                      style={{ background: 'color-mix(in srgb, var(--highlight) 10%, transparent)', color: 'var(--highlight)' }}
+                    >
+                      No chunk cleared the relevance bar - generation was skipped and the "not enough information" answer was returned.
+                    </p>
+                  )}
+
+                  <div>
+                    {trace.stages.map((stage, i) => (
+                      <StageRow key={stage.key} stage={stage} totalMs={trace.totalMs} isLast={i === trace.stages.length - 1} />
+                    ))}
+                  </div>
+                </div>
+              </motion.div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        )}
+      </AnimatePresence>
+    </Dialog.Root>
+  );
+}

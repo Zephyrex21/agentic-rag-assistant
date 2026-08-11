@@ -103,6 +103,7 @@ router.post('/:id/messages', async (req, res) => {
     let finalSources = [];
     let verified = true;
     let wasRevised = false;
+    let trace = null;
 
     for await (const event of rag.retrieveAndAnswerStream(question, { documentIds, history })) {
       if (clientDisconnected) break; // stop doing work if nobody's listening anymore
@@ -115,12 +116,14 @@ router.post('/:id/messages', async (req, res) => {
         writeSseEvent(res, 'chunk', { text: event.text });
       } else if (event.type === 'no_info') {
         finalAnswer = event.answer;
+        trace = event.trace ?? null;
         writeSseEvent(res, 'chunk', { text: event.answer });
       } else if (event.type === 'done') {
         finalAnswer = event.answer;
         finalSources = event.sources;
         verified = event.verified ?? true;
         wasRevised = event.wasRevised ?? false;
+        trace = event.trace ?? null;
       }
     }
 
@@ -132,6 +135,7 @@ router.post('/:id/messages', async (req, res) => {
       sources: finalSources,
       verified,
       wasRevised,
+      pipelineTrace: trace,
     });
 
     if (conversation.title === 'New conversation' && conversation.messages.length === 0) {
@@ -144,6 +148,7 @@ router.post('/:id/messages', async (req, res) => {
       sources: finalSources,
       verified,
       wasRevised,
+      trace,
     });
     res.end();
   } catch (err) {

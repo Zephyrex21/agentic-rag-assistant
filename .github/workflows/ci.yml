@@ -54,6 +54,7 @@ jobs:
       - run: npm run test:dedup
       - run: npm run test:queryexpansion
       - run: npm run test:adaptive-topk
+      - run: npm run test:tracebuilder
 
       # HTTP-level route tests (Express + supertest, DB/service layer
       # mocked with node:test's built-in mock.method) - a different layer

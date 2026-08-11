@@ -28,6 +28,67 @@ export interface Source {
   relevanceScore: number;
 }
 
+// --- Pipeline observability ---
+//
+// A lightweight reference to a chunk (never the full text) - used in the
+// rerank stage's "kept"/"dropped" lists in the Inspector panel.
+export interface TraceChunkRef {
+  filename: string;
+  section?: string;
+  chunkIndex: number;
+}
+
+// Every stage has the same shape - the Inspector renders each one with a
+// `key`-specific detail view, but doesn't need special-casing to know
+// there's a stage, its label, or how long it took.
+export interface TraceStage {
+  key: 'rewrite' | 'expansion' | 'retrieval' | 'dedup' | 'rerank' | 'generation' | 'verification';
+  label: string;
+  durationMs: number;
+  data: {
+    // rewrite
+    enabled?: boolean;
+    original?: string;
+    rewritten?: string;
+    changed?: boolean;
+    // expansion
+    variants?: string[];
+    // retrieval
+    queryVariantCount?: number;
+    hybridSearchEnabled?: boolean;
+    vectorHits?: number;
+    keywordHits?: number;
+    fusedCandidates?: number;
+    candidatesConsidered?: number;
+    // dedup
+    before?: number;
+    after?: number;
+    removed?: number;
+    // rerank
+    candidatesIn?: number;
+    topK?: number;
+    baseTopK?: number;
+    adaptiveTopKApplied?: boolean;
+    kept?: TraceChunkRef[];
+    dropped?: TraceChunkRef[];
+    rescueTriggered?: boolean;
+    // generation
+    chunksUsed?: number;
+    answerLength?: number;
+    // verification
+    passed?: boolean;
+    issue?: string | null;
+    wasRevised?: boolean;
+    revisionGenerationMs?: number;
+  };
+}
+
+export interface PipelineTrace {
+  stages: TraceStage[];
+  totalMs: number;
+  noInfo?: boolean;
+}
+
 export type MessageRole = 'user' | 'assistant';
 
 export interface Message {
@@ -50,6 +111,10 @@ export interface Message {
   // self-verification was disabled/not applicable, not just "unknown."
   verified?: boolean;
   wasRevised?: boolean;
+  // Persisted - a stage-by-stage record of what the pipeline did to
+  // produce this answer. Undefined/null when pipeline tracing was
+  // disabled, or for messages created before this feature existed.
+  pipelineTrace?: PipelineTrace | null;
 }
 
 export interface ConversationSummary {

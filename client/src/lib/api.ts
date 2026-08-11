@@ -4,6 +4,7 @@ import type {
   DocumentSummary,
   Folder,
   Message,
+  PipelineTrace,
   Source,
 } from './types';
 
@@ -145,6 +146,7 @@ export interface StreamDoneResult {
   sources: Source[];
   verified?: boolean;
   wasRevised?: boolean;
+  trace?: PipelineTrace | null;
 }
 
 export interface StreamCallbacks {

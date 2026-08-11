@@ -175,6 +175,7 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
               sources: result.sources,
               verified: result.verified,
               wasRevised: result.wasRevised,
+              pipelineTrace: result.trace,
               isStreaming: false,
             });
             refreshList();

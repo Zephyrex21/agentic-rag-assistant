@@ -8,6 +8,7 @@ const { dedupeChunks } = require('./dedup');
 const { rerank } = require('./reranker');
 const { verifyAnswer } = require('./selfVerification');
 const { generateAnswerStream } = require('./llm');
+const { buildTrace } = require('./traceBuilder');
 
 const TOP_K = parseInt(process.env.RETRIEVAL_TOP_K || '5', 10);
 const CANDIDATE_POOL = parseInt(process.env.RETRIEVAL_CANDIDATE_POOL || '15', 10);
@@ -33,6 +34,12 @@ const ENABLE_RERANKING = process.env.ENABLE_RERANKING !== 'false';
 const ENABLE_DEDUPLICATION = process.env.ENABLE_DEDUPLICATION !== 'false';
 const ENABLE_ADAPTIVE_TOPK = process.env.ENABLE_ADAPTIVE_TOPK !== 'false';
 const ENABLE_SELF_VERIFICATION = process.env.ENABLE_SELF_VERIFICATION !== 'false';
+// Collecting the raw timing/counts below is cheap (just Date.now() calls and
+// array lengths already available in scope) so it always happens - this
+// toggle only controls whether the formatted trace is actually attached to
+// the response/persisted, for people who'd rather not pay the (small) extra
+// JSON payload size or DB storage.
+const ENABLE_PIPELINE_TRACE = process.env.ENABLE_PIPELINE_TRACE !== 'false';
 
 // Heuristic, not an LLM call on purpose - this only needs to catch the
 // broad-question SHAPE (summaries, overviews, comparisons, "everything/all"
@@ -76,7 +83,8 @@ function extractCitedSourceNumbers(answerText) {
  * SINGLE query string, normalizing both result shapes to the same fields.
  * Split out from gatherCandidates so multi-query retrieval can fan this out
  * across several query variants in parallel without duplicating the
- * metadata-normalization logic per variant.
+ * metadata-normalization logic per variant. Also reports raw hit counts
+ * (before fusion/dedup) purely for the pipeline trace.
  */
 async function searchOneQuery(queryText, filter, documentIds) {
   const vectorPromise = embedOne(queryText, 'RETRIEVAL_QUERY').then((vector) =>
@@ -113,7 +121,7 @@ async function searchOneQuery(queryText, filter, documentIds) {
   }
 
   const lists = ENABLE_HYBRID_SEARCH ? [vectorList, keywordList] : [vectorList];
-  return { lists, entries };
+  return { lists, entries, vectorHitCount: vectorMatches.length, keywordHitCount: keywordMatches.length };
 }
 
 /**
@@ -138,14 +146,23 @@ async function gatherCandidates(queries, documentIds) {
 
   const lookup = new Map();
   const listsUsed = [];
-  for (const { lists, entries } of perQueryResults) {
+  let vectorHits = 0;
+  let keywordHits = 0;
+  for (const { lists, entries, vectorHitCount, keywordHitCount } of perQueryResults) {
     for (const [id, value] of entries) {
       if (!lookup.has(id)) lookup.set(id, value);
     }
     listsUsed.push(...lists);
+    vectorHits += vectorHitCount;
+    keywordHits += keywordHitCount;
   }
 
-  return { listsUsed, lookup };
+  return { listsUsed, lookup, vectorHits, keywordHits };
+}
+
+/** Lightweight chunk reference for the trace - never the full text, just enough to identify it in the Inspector UI. */
+function toChunkRef(c) {
+  return { filename: c.filename, section: c.section && c.section !== 'N/A' ? c.section : undefined, chunkIndex: c.chunkIndex };
 }
 
 /**
@@ -153,41 +170,77 @@ async function gatherCandidates(queries, documentIds) {
  * answer paths: rewrite -> expand -> gather -> fuse -> dedupe -> rerank.
  * Returns null chunks (with the "not enough info" answer) if nothing
  * relevant was found, so both callers can check `chunks === null` the same way.
+ *
+ * Also returns `traceRaw`, a bag of timing/count data gathered along the
+ * way for the pipeline trace - collected unconditionally (it's just
+ * Date.now() calls and array lengths already in scope, no extra cost) and
+ * only formatted/attached downstream if ENABLE_PIPELINE_TRACE is on.
  */
 async function retrieveChunks(question, { documentIds, history = [] } = {}) {
+  const traceRaw = { originalQuestion: question, rewriteEnabled: ENABLE_QUERY_REWRITE, expansionEnabled: ENABLE_QUERY_EXPANSION };
+
+  let t = Date.now();
   const searchQuery = ENABLE_QUERY_REWRITE ? await rewriteQuery(question, history) : question;
+  traceRaw.searchQuery = searchQuery;
+  traceRaw.rewriteMs = Date.now() - t;
 
   // Multi-query retrieval: search with the original query AND a few
   // alternate phrasings in parallel, so wording that doesn't match the
   // document's exact vocabulary still has other angles to land on. All
   // variants' results get fused together by RRF below - a chunk multiple
   // variants agree on naturally outranks one only a single phrasing found.
+  t = Date.now();
   const expandedQueries = ENABLE_QUERY_EXPANSION ? await expandQuery(searchQuery) : [];
+  traceRaw.expansionMs = Date.now() - t;
+  traceRaw.expandedQueries = expandedQueries;
   const queries = [searchQuery, ...expandedQueries];
+  traceRaw.queryVariantCount = queries.length;
 
-  const { listsUsed, lookup } = await gatherCandidates(queries, documentIds);
+  t = Date.now();
+  const { listsUsed, lookup, vectorHits, keywordHits } = await gatherCandidates(queries, documentIds);
   const fused = reciprocalRankFusion(listsUsed);
+  traceRaw.retrievalMs = Date.now() - t;
+  traceRaw.hybridSearchEnabled = ENABLE_HYBRID_SEARCH;
+  traceRaw.vectorHits = vectorHits;
+  traceRaw.keywordHits = keywordHits;
+  traceRaw.fusedCount = fused.length;
 
   if (fused.length === 0) {
-    return { chunks: null, searchQuery, listsUsed };
+    traceRaw.candidatePoolRawCount = 0;
+    traceRaw.candidatePoolCount = 0;
+    traceRaw.dedupEnabled = ENABLE_DEDUPLICATION;
+    traceRaw.dedupMs = 0;
+    traceRaw.noInfo = true;
+    return { chunks: null, searchQuery, listsUsed, traceRaw };
   }
 
   const fusedPool = fused
     .slice(0, CANDIDATE_POOL)
     .map((f) => ({ ...lookup.get(f.id), rrfScore: f.rrfScore }))
     .filter((c) => c.id);
+  traceRaw.candidatePoolRawCount = fusedPool.length;
 
   // Drop near-duplicate passages before they eat a slot in the reranker's
   // limited candidate budget - more likely to happen now that multi-query
   // retrieval searches the same corpus from several angles at once.
+  t = Date.now();
   const candidatePool = ENABLE_DEDUPLICATION ? dedupeChunks(fusedPool, DEDUP_SIMILARITY_THRESHOLD) : fusedPool;
+  traceRaw.dedupMs = Date.now() - t;
+  traceRaw.dedupEnabled = ENABLE_DEDUPLICATION;
+  traceRaw.candidatePoolCount = candidatePool.length;
 
   const topK = computeTopK(searchQuery);
+  traceRaw.topK = topK;
+  traceRaw.baseTopK = TOP_K;
+  traceRaw.rerankEnabled = ENABLE_RERANKING;
 
   let finalChunks;
+  let rescueTriggered = false;
+
+  t = Date.now();
   if (ENABLE_RERANKING) {
-    finalChunks = await rerank(searchQuery, candidatePool, topK);
-    if (finalChunks.length === 0) {
+    const rerankKept = await rerank(searchQuery, candidatePool, topK);
+    if (rerankKept.length === 0) {
       // The reranker rejected everything. This can be a genuinely correct
       // call (nothing relevant exists) - but it can also be an overly
       // strict judgment, especially on broad "what is this about"-style
@@ -199,19 +252,38 @@ async function retrieveChunks(question, { documentIds, history = [] } = {}) {
       const topNormalized = normalizeRrfScore(candidatePool[0].rrfScore, listsUsed.length);
       if (topNormalized >= RERANK_RESCUE_THRESHOLD) {
         finalChunks = candidatePool.slice(0, topK);
+        rescueTriggered = true;
       } else {
-        return { chunks: null, searchQuery, listsUsed };
+        traceRaw.rerankMs = Date.now() - t;
+        traceRaw.rescueTriggered = false;
+        traceRaw.kept = [];
+        traceRaw.dropped = candidatePool.map(toChunkRef);
+        traceRaw.noInfo = true;
+        return { chunks: null, searchQuery, listsUsed, traceRaw };
       }
+    } else {
+      finalChunks = rerankKept;
     }
   } else {
     const topNormalized = normalizeRrfScore(candidatePool[0].rrfScore, listsUsed.length);
     if (topNormalized < MIN_RELEVANCE_SCORE) {
-      return { chunks: null, searchQuery, listsUsed };
+      traceRaw.rerankMs = Date.now() - t;
+      traceRaw.rescueTriggered = false;
+      traceRaw.kept = [];
+      traceRaw.dropped = candidatePool.map(toChunkRef);
+      traceRaw.noInfo = true;
+      return { chunks: null, searchQuery, listsUsed, traceRaw };
     }
     finalChunks = candidatePool.slice(0, topK);
   }
+  traceRaw.rerankMs = Date.now() - t;
+  traceRaw.rescueTriggered = rescueTriggered;
 
-  return { chunks: finalChunks, searchQuery, listsUsed };
+  const keptIds = new Set(finalChunks.map((c) => c.id));
+  traceRaw.kept = finalChunks.map(toChunkRef);
+  traceRaw.dropped = candidatePool.filter((c) => !keptIds.has(c.id)).map(toChunkRef);
+
+  return { chunks: finalChunks, searchQuery, listsUsed, traceRaw };
 }
 
 function buildSources(finalChunks, listsUsed, citedNumbers) {
@@ -242,8 +314,8 @@ function buildSources(finalChunks, listsUsed, citedNumbers) {
  *                                    for a revision pass, if one happens)
  *   { type: 'revising', issue }   - self-verification found a problem; a corrected
  *                                    answer is about to stream in, replacing this one
- *   { type: 'done', answer, sources, verified, wasRevised } - final state
- *   { type: 'no_info' }           - nothing relevant found, no generation call made
+ *   { type: 'done', answer, sources, verified, wasRevised, trace } - final state
+ *   { type: 'no_info', trace }    - nothing relevant found, no generation call made
  *
  * Self-verification runs after a first answer streams in: one cheap batched
  * call checks whether the answer is actually supported by its sources. If
@@ -251,12 +323,20 @@ function buildSources(finalChunks, listsUsed, citedNumbers) {
  * prompt, and streams in as a visible correction rather than a silent retry.
  * Capped at a single revision regardless of outcome - this is meant to catch
  * genuine mistakes, not loop indefinitely chasing a perfect score.
+ *
+ * `trace` (present when ENABLE_PIPELINE_TRACE is on) is a stage-by-stage
+ * record of what the pipeline actually did for this query - see
+ * traceBuilder.js for the shape. It's built from data already gathered
+ * during the run, so producing it costs no extra API calls.
  */
 async function* retrieveAndAnswerStream(question, options = {}) {
-  const { chunks, listsUsed } = await retrieveChunks(question, options);
+  const streamStart = Date.now();
+  const { chunks, listsUsed, traceRaw } = await retrieveChunks(question, options);
 
   if (!chunks) {
-    yield { type: 'no_info', answer: NO_INFO_ANSWER };
+    traceRaw.totalMs = Date.now() - streamStart;
+    const trace = ENABLE_PIPELINE_TRACE ? buildTrace(traceRaw) : null;
+    yield { type: 'no_info', answer: NO_INFO_ANSWER, trace };
     return;
   }
 
@@ -265,28 +345,38 @@ async function* retrieveAndAnswerStream(question, options = {}) {
 
   const history = options.history || [];
   let fullAnswer = '';
+  let t = Date.now();
   for await (const textChunk of generateAnswerStream(question, chunks, history)) {
     fullAnswer += textChunk;
     yield { type: 'chunk', text: textChunk };
   }
+  traceRaw.generationMs = Date.now() - t;
+  traceRaw.chunksUsedCount = chunks.length;
+  traceRaw.answerLength = fullAnswer.length;
 
   let citedNumbers = extractCitedSourceNumbers(fullAnswer);
   let finalSources = buildSources(chunks, listsUsed, citedNumbers);
   let verified = true;
   let wasRevised = false;
+  traceRaw.verificationEnabled = ENABLE_SELF_VERIFICATION;
 
   if (ENABLE_SELF_VERIFICATION) {
+    t = Date.now();
     const check = await verifyAnswer(question, fullAnswer, finalSources);
+    traceRaw.verificationMs = Date.now() - t;
+    traceRaw.verificationIssue = check.issue;
 
     if (!check.passed) {
       yield { type: 'revising', issue: check.issue };
 
       let revisedAnswer = '';
       const revision = { previousAnswer: fullAnswer, issues: check.issue };
+      t = Date.now();
       for await (const textChunk of generateAnswerStream(question, chunks, history, revision)) {
         revisedAnswer += textChunk;
         yield { type: 'chunk', text: textChunk };
       }
+      traceRaw.revisionGenerationMs = Date.now() - t;
 
       fullAnswer = revisedAnswer;
       citedNumbers = extractCitedSourceNumbers(fullAnswer);
@@ -295,12 +385,19 @@ async function* retrieveAndAnswerStream(question, options = {}) {
 
       // One more check on the revised answer, purely for the `verified`
       // flag shown in the UI - does NOT trigger a second revision loop.
+      t = Date.now();
       const secondCheck = await verifyAnswer(question, fullAnswer, finalSources);
+      traceRaw.secondVerificationMs = Date.now() - t;
       verified = secondCheck.passed;
     }
+    traceRaw.verificationPassed = verified;
+    traceRaw.wasRevised = wasRevised;
   }
 
-  yield { type: 'done', answer: fullAnswer, sources: finalSources, verified, wasRevised };
+  traceRaw.totalMs = Date.now() - streamStart;
+  const trace = ENABLE_PIPELINE_TRACE ? buildTrace(traceRaw) : null;
+
+  yield { type: 'done', answer: fullAnswer, sources: finalSources, verified, wasRevised, trace };
 }
 
 module.exports = { retrieveAndAnswerStream, NO_INFO_ANSWER, extractCitedSourceNumbers, computeTopK, BROAD_QUESTION_RE };
