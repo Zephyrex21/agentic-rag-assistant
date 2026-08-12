@@ -12,7 +12,7 @@
 
 # Agentic RAG Assistant
 
-A full-stack retrieval-augmented generation system where every answer traces back to its exact source. Built to go beyond a basic "embed and search" wrapper — hybrid retrieval, LLM reranking, and query rewriting for follow-ups, wrapped in a real product UI with live streaming and verifiable citations.
+A full-stack retrieval-augmented generation system where every answer traces back to its exact source. Built to go beyond a basic "embed and search" wrapper — a tool-calling agent that decides for itself whether/how many times to search, hybrid retrieval with reranking underneath it, and self-verification with visible corrections, wrapped in a real product UI with live streaming, verifiable citations, and a per-query pipeline inspector.
 
 **Stack:** Node.js/Express · React (Vite) · TypeScript · Groq · Jina AI · Pinecone · Supabase
 
@@ -41,14 +41,16 @@ A full-stack retrieval-augmented generation system where every answer traces bac
 
 ## Why this isn't just another RAG demo
 
-Most RAG tutorials stop at "embed chunks, do a vector search, stuff into a prompt." That approach has a well-known failure mode: pure vector similarity misses exact matches (product names, numbers, specific phrases), and there's no check on whether the retrieved chunks actually answer the question. This project addresses both directly:
+Most RAG tutorials stop at "embed chunks, do a vector search, stuff into a prompt." That approach has a well-known failure mode: pure vector similarity misses exact matches (product names, numbers, specific phrases), there's no check on whether the retrieved chunks actually answer the question, and the pipeline runs the same fixed sequence whether the question needs one search or five. This project addresses all three directly:
 
+- **Agentic retrieval** — a tool-calling planner decides for itself whether a question needs searching the documents at all, and how many times, instead of a fixed pipeline that always runs exactly one search. A comparison question gets one focused search per thing being compared; a greeting gets none; a question that needs refining gets a follow-up search - all decided by the model, not hardcoded. Falls back to the deterministic fixed pipeline automatically if planning itself fails (see [Architecture](#architecture))
 - **Hybrid retrieval** — vector search (Pinecone) and keyword search (Postgres full-text) run in parallel and get fused with Reciprocal Rank Fusion, so a chunk that's a strong match on *either* signal surfaces correctly
 - **Multi-query retrieval** — the query is expanded into a couple of alternate phrasings, each searched independently and fused together with everything else, so wording mismatches between the question and the document's vocabulary don't silently lose recall
 - **LLM reranking** — a single batched call re-judges the fused, deduplicated candidates for genuine relevance, not just similarity score, before anything reaches the answering model
-- **Query rewriting** — follow-up questions ("what about the second one?") get expanded into standalone queries using conversation history before retrieval runs
-- **Self-verification** — after an answer is generated, a separate check asks whether it's actually supported by the cited sources. If not, one corrected revision streams in as a visible replacement, with the specific problem fed back into the prompt — not a silent retry
+- **Query rewriting** — follow-up questions ("what about the second one?") get expanded into standalone queries using conversation history before retrieval runs (fixed pipeline only - the agentic planner already sees conversation history directly and resolves references itself when it writes a search query)
+- **Self-verification** — after an answer is generated, a separate check asks whether it's actually supported by the cited sources. If not, one corrected revision streams in as a visible replacement, with the specific problem fed back into the prompt - and in agentic mode, a small follow-up search guided by that same critique, not just a reworded retry
 - **Verifiable citations** — every claim in an answer links back to the exact source chunk, with the model's own citation graph reflected in the UI (used vs. merely-retrieved sources are shown separately)
+- **Pipeline observability** — every answer carries a stage-by-stage trace, inspectable per-message in the UI, showing exactly what the pipeline (or the agent) actually did to produce it
 
 ## Screenshots
 
@@ -61,6 +63,27 @@ Most RAG tutorials stop at "embed chunks, do a vector search, stuff into a promp
 -->
 
 ## Architecture
+
+By default (`ENABLE_AGENTIC_MODE=true`), a tool-calling planner decides retrieval dynamically instead of running a fixed sequence:
+
+```mermaid
+flowchart LR
+    Q[Question + history] --> PLAN[Planner:<br/>decide what to search]
+    PLAN -->|no search needed| SKIP[Zero sources]
+    PLAN -->|1+ tool calls,<br/>up to 3 turns| TOOLS[search_documents /<br/>list_documents]
+    TOOLS -->|each call runs| ENGINE[expand → hybrid search<br/>→ fuse → dedupe → rerank]
+    ENGINE --> PLAN
+    ENGINE --> MERGE[Merge + dedupe<br/>across all calls]
+    SKIP --> GEN
+    MERGE --> GEN[Answer generation<br/>+ streaming]
+    GEN --> VERIFY{Self-verification:<br/>supported by sources?}
+    VERIFY -->|yes| OUT[Cited answer]
+    VERIFY -->|no, one retry| RESEARCH[Small follow-up search<br/>guided by the critique]
+    RESEARCH --> REVISE[Revised answer<br/>+ critique fed back]
+    REVISE --> OUT
+```
+
+If planning itself fails before anything is returned to the client, the request transparently falls back to the deterministic fixed pipeline below for that one query - it never surfaces an error to the person asking. Set `ENABLE_AGENTIC_MODE=false` to always use the fixed pipeline:
 
 ```mermaid
 flowchart LR
@@ -79,20 +102,23 @@ flowchart LR
     REVISE --> OUT
 ```
 
+Both paths share the same retrieval engine (`runRetrieval` in `rag.js`: expand → hybrid search → fuse → dedupe → rerank) - the agentic planner just calls it once per search it decides to make, while the fixed pipeline always calls it exactly once. Both also share the same generation and self-verification code; only how the source chunks were gathered differs.
+
 ## Key Features
 
 **Retrieval & answering**
+- **Agentic retrieval planning** — a tool-calling model decides whether a question needs searching at all, and how many times, via two read-only tools (`search_documents`, `list_documents`) rather than a fixed one-search-per-question sequence. A multi-part comparison question gets one focused search per part; small talk gets none, without ever letting the model answer content questions from its own parametric knowledge (see `agenticRag.js`'s planner system prompt for the exact groundedness guarantee this relies on)
 - Structure-aware document chunking (markdown-header-aware, word-window fallback for plain text/PDF), with chunk boundaries snapped to the nearest sentence ending instead of cutting strictly mid-sentence
 - Multi-query retrieval — the query is expanded into alternate phrasings that each run hybrid search independently, all fused together with RRF (which fuses N ranked lists, not just two), so wording that doesn't match the document's exact vocabulary still has other angles to land on
-- Near-duplicate chunk removal before reranking (cheap word-overlap check, no extra API calls) — keeps the reranker's limited candidate budget from being spent on repeat passages, which multi-query retrieval makes more likely
+- Near-duplicate chunk removal before reranking (cheap word-overlap check, no extra API calls) — keeps the reranker's limited candidate budget from being spent on repeat passages, which multi-query retrieval makes more likely, and runs again to merge results across multiple agentic search calls
 - Adaptive top-K — broad questions ("summarize", "compare X and Y", "give me an overview") automatically pull more source chunks than narrow factual ones, via a zero-latency keyword heuristic
 - Hybrid search fused with RRF, LLM reranking with a rescue safety net for broad/overview questions
-- Self-verification with a single visible revision pass — answers are checked against their own cited sources after generation
+- Self-verification with a single visible revision pass — answers are checked against their own cited sources after generation. In agentic mode, a failed check also triggers one small follow-up search guided by the specific critique, not just a reworded retry
 - Generation prompt tuned for per-claim citation density and cross-source synthesis, not just source-by-source restatement
 - Streaming responses via Server-Sent Events — answers appear token-by-token
-- Cross-family model fallback (generation/utility calls automatically retry on a different model family if the primary is decommissioned - see `modelFallback.js`), plus a separate provider-level fallback (Mistral) if Groq itself is unreachable, not just a single model
-- A golden-set evaluation harness (`npm run eval`) scoring retrieval precision, answer faithfulness (LLM-as-judge), and abstention accuracy against a fictional document designed so the model can't cheat with training-data knowledge
-- **Pipeline observability** — every answer carries a stage-by-stage trace (rewrite → expansion → retrieval → dedup → rerank → generation → verification, each with timing and its key decisions) built from data the pipeline already produces, at no extra API cost. Inspectable per-message in the UI (see below), not just in server logs
+- Cross-family model fallback (generation/utility calls automatically retry on a different model family if the primary is decommissioned - see `modelFallback.js`), plus a separate provider-level fallback (Mistral) if Groq itself is unreachable, not just a single model. Agentic planning failures fall back to the deterministic fixed pipeline automatically, transparent to the person asking
+- A golden-set evaluation harness (`npm run eval`) scoring retrieval precision, answer faithfulness (LLM-as-judge), and abstention accuracy against a fictional document designed so the model can't cheat with training-data knowledge - runs unchanged against either retrieval mode, since it talks to the HTTP API, not the internals
+- **Pipeline observability** — every answer carries a stage-by-stage trace built from data the pipeline already produces, at no extra API cost. Fixed-pipeline traces show rewrite → expansion → retrieval → dedup → rerank → generation → verification; agentic traces show the planner's actual tool calls (which queries it chose, how many passages each found) in place of the fixed sequence. Inspectable per-message in the UI (see below), not just in server logs
 
 **Conversations**
 - Multi-turn memory backed by Supabase, with auto-titled threads
@@ -193,6 +219,10 @@ All configuration lives in `server/.env` (see `.env.example` for the full list w
 | `JINA_API_KEY` | Embeddings key — kept on a separate provider from Groq since Groq doesn't have a reliably documented embeddings API |
 | `MISTRAL_API_KEY` | Optional provider-level fallback if Groq is entirely unreachable — unset simply skips this, no code changes needed |
 | `ENABLE_HYBRID_SEARCH`, `ENABLE_RERANKING`, `ENABLE_QUERY_REWRITE`, `ENABLE_QUERY_EXPANSION`, `ENABLE_DEDUPLICATION`, `ENABLE_ADAPTIVE_TOPK`, `ENABLE_SELF_VERIFICATION`, `ENABLE_PIPELINE_TRACE` | Toggle any pipeline stage independently, no code changes needed |
+| `ENABLE_AGENTIC_MODE` | Use the tool-calling planner instead of the fixed pipeline (default `true`). Falls back to the fixed pipeline automatically for a request if planning itself fails |
+| `AGENTIC_MAX_STEPS` | Max planner round-trips per question (default `3`) - a single round-trip can still request multiple parallel searches |
+| `AGENTIC_PLANNER_MODEL`, `AGENTIC_PLANNER_MODEL_FALLBACK` | Model used for retrieval planning - defaults to `UTILITY_MODEL`, independently overridable |
+| `ENABLE_AGENTIC_RESEARCH_ON_REVISION` | On a self-verification failure in agentic mode, run one small extra search guided by the critique before revising (default `true`) |
 | `QUERY_EXPANSION_COUNT` | How many alternate phrasings to generate for multi-query retrieval (0 disables it) |
 | `DEDUP_SIMILARITY_THRESHOLD` | Word-overlap threshold above which two candidate chunks are treated as near-duplicates |
 | `ADAPTIVE_TOPK_BONUS` | Extra chunks retrieved for broad/summary-style questions on top of `RETRIEVAL_TOP_K` |
@@ -234,8 +264,12 @@ npm run test:prompt        # prompt construction, with/without conversation hist
 npm run test:dedup         # near-duplicate chunk removal
 npm run test:queryexpansion # multi-query expansion response parsing
 npm run test:adaptive-topk # broad-vs-narrow question topK classification
-npm run test:tracebuilder  # pipeline trace formatting, incl. no_info/rescue/disabled-stage shapes
+npm run test:tracebuilder  # pipeline trace formatting, incl. no_info/rescue/disabled-stage shapes, both fixed and agentic shapes
+npm run test:agenttools    # tool schema validity, document-scope filtering
+npm run test:agenticplanner # planner system prompt content, tool-argument parsing
 ```
+
+The agentic planner's actual tool-calling LOOP (deciding what to search, executing the calls, looping) isn't covered by a standalone test - it makes real Groq tool-calling API calls, the same reason `rerank()`, `rewriteQuery()`, and `verifyAnswer()` aren't directly unit tested either, only their pure prompt-building/response-parsing pieces are (see `test:reranker`, etc.). Its live behavior is exercised by the eval harness below and by manual testing against a real Groq key.
 
 A second layer tests the HTTP route handlers themselves (Express + [supertest](https://github.com/ladjs/supertest)), covering request validation, status codes, and error-path behavior (e.g. a document delete that still succeeds even if the Pinecone cleanup call fails, or a conversation that only gets auto-titled on its first message, not every message). The DB and provider layers are mocked with `node:test`'s built-in `t.mock.method()` — no live Supabase/Pinecone/Groq calls, so like everything else here it runs green with zero secrets configured:
 
@@ -309,15 +343,18 @@ By default the backend accepts requests from any origin (fine for local dev and 
 
 ## Known Limitations
 
-- Retrieval uses only the current question's embedding — conversation history informs *generation* (via query rewriting before retrieval) but isn't otherwise used to re-rank results
+- Retrieval uses only the current question's embedding — in the fixed pipeline, conversation history informs generation via query rewriting before retrieval but isn't otherwise used to re-rank results; the agentic planner sees history directly and can resolve references itself, but still doesn't re-rank based on it
+- Agentic planning adds one or more extra LLM round-trips before generation starts - typically a few hundred ms to ~1-2s depending on how many searches the planner decides to run, in exchange for the ability to skip or multiply searches as the question actually needs
+- The planner is capped at `AGENTIC_MAX_STEPS` (default 3) round-trips - a question that genuinely needs more than that many distinct searches will proceed with whatever's been gathered so far rather than continuing indefinitely
 - No authentication layer — not required for local/single-user use, would be needed before any public deployment
 - Documents uploaded before `migration_002_hybrid_search.sql` need re-uploading to benefit from hybrid search (their chunks predate the keyword-search index)
 - This project originally used Gemini for both embeddings and generation; it now uses Jina AI for embeddings and Groq for generation, after Gemini's newly-issued API keys started hitting a Google-side authentication rollout issue. If you have documents ingested under the old Gemini setup, **re-upload them** — Jina's embeddings live in a different vector space than Gemini's, so old vectors in Pinecone won't retrieve correctly against new Jina-embedded queries even though both happen to use 768 dimensions.
 
 ## Roadmap
 
-- Truly agentic retrieval — replace the fixed pipeline with a tool-calling loop that decides whether/how many times to search, instead of always running the same fixed sequence once
 - Production hardening — rate limiting, auth
+- Wider agent tool set — a calculator/math tool for numeric questions over tabular data, or a document-comparison tool that explicitly diffs two sources instead of relying on the generation prompt to synthesize across separately-retrieved chunks
+- Multi-key rotation for the Groq free tier, so a single conversation's planning + generation + verification calls can spread across more than one API key
 
 ## License
 

@@ -41,6 +41,9 @@ app.get('/health', (req, res) => {
     GENERATION_MODEL_FALLBACK: process.env.GENERATION_MODEL_FALLBACK || 'openai/gpt-oss-120b',
     UTILITY_MODEL: process.env.UTILITY_MODEL || 'llama-3.1-8b-instant',
     UTILITY_MODEL_FALLBACK: process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-20b',
+    AGENTIC_PLANNER_MODEL: process.env.AGENTIC_PLANNER_MODEL || process.env.UTILITY_MODEL || 'llama-3.1-8b-instant',
+    AGENTIC_PLANNER_MODEL_FALLBACK:
+      process.env.AGENTIC_PLANNER_MODEL_FALLBACK || process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-20b',
   };
   const modelWarnings = Object.entries(configuredModels)
     .filter(([, model]) => KNOWN_PROBLEMATIC_MODELS.includes(model))
@@ -48,12 +51,14 @@ app.get('/health', (req, res) => {
 
   res.json({
     status: 'ok',
-    phase: 'Phase 7 - Streaming + Premium UI (Groq + Jina)',
+    phase: 'Phase 8 - Agentic Retrieval (Groq tool calling)',
     groqConfigured: Boolean(process.env.GROQ_API_KEY),
     jinaConfigured: Boolean(process.env.JINA_API_KEY),
     pineconeConfigured: Boolean(process.env.PINECONE_API_KEY && process.env.PINECONE_INDEX_NAME),
     supabaseConfigured: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY),
     pipeline: {
+      agenticMode: process.env.ENABLE_AGENTIC_MODE !== 'false',
+      agenticResearchOnRevision: process.env.ENABLE_AGENTIC_RESEARCH_ON_REVISION !== 'false',
       queryRewrite: process.env.ENABLE_QUERY_REWRITE !== 'false',
       queryExpansion: process.env.ENABLE_QUERY_EXPANSION !== 'false',
       hybridSearch: process.env.ENABLE_HYBRID_SEARCH !== 'false',

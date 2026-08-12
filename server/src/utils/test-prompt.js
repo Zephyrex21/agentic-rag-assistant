@@ -44,3 +44,17 @@ console.assert(historyPrompt.includes('CONVERSATION SO FAR'), 'FAIL: missing his
 console.assert(historyPrompt.includes('User: What security features'), 'FAIL: missing prior user turn');
 console.assert(historyPrompt.includes('Assistant: It has rate limiting'), 'FAIL: missing prior assistant turn');
 console.log('\n✅ Conversation history correctly threaded into the prompt.');
+
+// --- Empty chunks (agentic mode's "skipped search" case, e.g. a greeting) ---
+const noChunksPrompt = buildPrompt('Hey, thanks for the help!', []);
+console.log('\n=== Prompt with ZERO chunks (skipped-search case) ===\n');
+console.log(noChunksPrompt);
+console.assert(!noChunksPrompt.includes('SOURCES:'), 'FAIL: the zero-chunk prompt should not have a SOURCES section at all');
+console.assert(noChunksPrompt.includes("didn't appear to need a document lookup"), 'FAIL: missing the no-search-happened framing');
+console.assert(/greeting|thank-you/.test(noChunksPrompt), 'FAIL: missing small-talk handling guidance');
+console.assert(/do not guess|outside knowledge/i.test(noChunksPrompt), 'FAIL: zero-chunk prompt must still forbid answering from outside knowledge');
+console.log('✅ Zero-chunk prompt has no SOURCES section, but still forbids guessing on real content questions.');
+
+const noChunksWithHistory = buildPrompt('anything else?', [], [{ role: 'user', content: 'What is Cryptex?' }]);
+console.assert(noChunksWithHistory.includes('CONVERSATION SO FAR'), 'FAIL: history should still thread through the zero-chunk prompt');
+console.log('✅ Conversation history still included even when there are zero chunks.');

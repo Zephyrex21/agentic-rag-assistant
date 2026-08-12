@@ -19,13 +19,29 @@ const FALLBACK_MODEL = process.env.GENERATION_MODEL_FALLBACK || 'openai/gpt-oss-
 const MISTRAL_FALLBACK_MODEL = process.env.MISTRAL_FALLBACK_MODEL || 'mistral-large-latest';
 
 function buildPrompt(question, chunks, history = [], revision = null) {
-  const context = chunks
-    .map((c, i) => `[Source ${i + 1}: ${c.filename}${c.section && c.section !== 'N/A' ? ` — ${c.section}` : ''}]\n${c.text}`)
-    .join('\n\n---\n\n');
-
   const historyBlock = history.length
     ? `CONVERSATION SO FAR:\n${history.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n')}\n\n`
     : '';
+
+  // No sources were retrieved for this message - either the agentic
+  // planner deliberately decided no search was needed (e.g. a greeting),
+  // or some other path bypassed retrieval. There's genuinely nothing to
+  // cite here, so this is a distinct, narrower prompt rather than the
+  // source-grounded one below with an empty SOURCES block - rules like
+  // "cite inline" or "synthesize across sources" don't apply to it.
+  if (chunks.length === 0) {
+    return `You are a knowledge assistant that answers questions using ONLY uploaded documents. No documents were searched for this message - it didn't appear to need a document lookup.
+
+${historyBlock}If the message below is a greeting, a thank-you, or a general question about what you can help with, reply briefly and naturally, and mention that you can answer questions about the uploaded documents. If it's actually asking about specific facts or content, say clearly that you don't have relevant information to answer it right now - do not guess or answer from outside knowledge.
+
+MESSAGE: ${question}
+
+ANSWER:`;
+  }
+
+  const context = chunks
+    .map((c, i) => `[Source ${i + 1}: ${c.filename}${c.section && c.section !== 'N/A' ? ` — ${c.section}` : ''}]\n${c.text}`)
+    .join('\n\n---\n\n');
 
   // Revision pass: the first answer didn't hold up to self-verification.
   // Feed the specific critique back in rather than just retrying blind -

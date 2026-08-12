@@ -110,4 +110,83 @@ function buildTrace(raw) {
   return { stages, totalMs: raw.totalMs || 0, noInfo: false };
 }
 
-module.exports = { buildTrace };
+/**
+ * Formats the raw ingredients from the AGENTIC retrieval path (see
+ * agenticRag.js) into the same {stages, totalMs, noInfo} shape buildTrace
+ * produces for the fixed pipeline, so the frontend Inspector can render
+ * either without needing to know which mode ran - it just reads
+ * `trace.agentic` to decide how to render the one genuinely different
+ * stage ('planning', a list of tool-call steps instead of a single
+ * decision). Every other stage (dedup/generation/verification) is close
+ * enough in shape to the fixed pipeline's that the same rendering logic
+ * covers both, just with a "Merge & Deduplicate" label instead of
+ * "Deduplication" - the underlying data is genuinely the same operation
+ * (drop near-duplicate chunks), just running across accumulated multi-call
+ * results here instead of a single call's fused pool.
+ *
+ * @param {object} raw - see agenticRag.js for exactly what's collected
+ */
+function buildAgenticTrace(raw) {
+  const stages = [];
+
+  stages.push({
+    key: 'planning',
+    label: 'Agent Planning',
+    durationMs: raw.planningMs || 0,
+    data: {
+      skippedSearch: !!raw.skippedSearch,
+      totalSteps: (raw.steps || []).length,
+      steps: raw.steps || [],
+    },
+  });
+
+  if (raw.noInfo) {
+    return { stages, totalMs: raw.totalMs || 0, noInfo: true, agentic: true };
+  }
+
+  stages.push({
+    key: 'dedup',
+    label: 'Merge & Deduplicate',
+    durationMs: raw.dedupMs || 0,
+    data: {
+      enabled: raw.dedupEnabled,
+      before: raw.before,
+      after: raw.after,
+      removed: Math.max(0, (raw.before || 0) - (raw.after || 0)),
+    },
+  });
+
+  stages.push({
+    key: 'generation',
+    label: 'Answer Generation',
+    durationMs: raw.generationMs || 0,
+    data: {
+      chunksUsed: raw.chunksUsedCount,
+      answerLength: raw.answerLength,
+    },
+  });
+
+  if (raw.verificationEnabled) {
+    stages.push({
+      key: 'verification',
+      label: 'Self-Verification',
+      durationMs:
+        (raw.verificationMs || 0) +
+        (raw.researchOnRevisionMs || 0) +
+        (raw.revisionGenerationMs || 0) +
+        (raw.secondVerificationMs || 0),
+      data: {
+        passed: raw.verificationPassed,
+        issue: raw.verificationIssue,
+        wasRevised: raw.wasRevised,
+        revisionGenerationMs: raw.revisionGenerationMs || 0,
+        researchOnRevision: !!raw.researchOnRevision,
+        additionalStepsOnRevision: raw.additionalStepsOnRevision || [],
+      },
+    });
+  }
+
+  return { stages, totalMs: raw.totalMs || 0, noInfo: false, agentic: true };
+}
+
+module.exports = { buildTrace, buildAgenticTrace };

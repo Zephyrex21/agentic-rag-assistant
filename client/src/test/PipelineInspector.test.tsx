@@ -127,3 +127,79 @@ describe('PipelineInspectorTrigger', () => {
     expect(screen.queryByText('Answer Generation')).not.toBeInTheDocument();
   });
 });
+
+describe('PipelineInspectorTrigger - agentic mode', () => {
+  function makeAgenticTrace(overrides: Partial<PipelineTrace> = {}): PipelineTrace {
+    return {
+      totalMs: 2100,
+      noInfo: false,
+      agentic: true,
+      stages: [
+        {
+          key: 'planning',
+          label: 'Agent Planning',
+          durationMs: 640,
+          data: {
+            skippedSearch: false,
+            totalSteps: 2,
+            steps: [
+              { tool: 'search_documents', query: 'Cryptex security features', chunksFound: 2, rescueTriggered: false, durationMs: 310 },
+              { tool: 'search_documents', query: 'WS Inspector deployment', chunksFound: 1, rescueTriggered: false, durationMs: 290 },
+            ],
+          },
+        },
+        { key: 'dedup', label: 'Merge & Deduplicate', durationMs: 2, data: { enabled: true, before: 3, after: 3, removed: 0 } },
+        { key: 'generation', label: 'Answer Generation', durationMs: 950, data: { chunksUsed: 3, answerLength: 300 } },
+        { key: 'verification', label: 'Self-Verification', durationMs: 140, data: { passed: true, issue: null, wasRevised: false } },
+      ],
+      ...overrides,
+    };
+  }
+
+  it('shows an agentic badge and the merge-dedup label distinct from the fixed pipeline', async () => {
+    const user = userEvent.setup();
+    render(<PipelineInspectorTrigger trace={makeAgenticTrace()} />);
+    await user.click(screen.getByRole('button', { name: /inspect pipeline/i }));
+    expect(screen.getByText('agentic')).toBeInTheDocument();
+    expect(screen.getByText('Agent Planning')).toBeInTheDocument();
+    expect(screen.getByText('Merge & Deduplicate')).toBeInTheDocument();
+  });
+
+  it('lists every search step with its query and result count', async () => {
+    const user = userEvent.setup();
+    render(<PipelineInspectorTrigger trace={makeAgenticTrace()} />);
+    await user.click(screen.getByRole('button', { name: /inspect pipeline/i }));
+    expect(screen.getByText('"Cryptex security features"')).toBeInTheDocument();
+    expect(screen.getByText('"WS Inspector deployment"')).toBeInTheDocument();
+    expect(screen.getByText('2 passage(s) found')).toBeInTheDocument();
+  });
+
+  it('shows a skipped-search notice instead of steps when the agent decided no search was needed', async () => {
+    const user = userEvent.setup();
+    const trace = makeAgenticTrace();
+    trace.stages[0] = { key: 'planning', label: 'Agent Planning', durationMs: 180, data: { skippedSearch: true, totalSteps: 0, steps: [] } };
+    render(<PipelineInspectorTrigger trace={trace} />);
+    await user.click(screen.getByRole('button', { name: /inspect pipeline/i }));
+    expect(screen.getByText(/didn't need a document search/i)).toBeInTheDocument();
+  });
+
+  it('shows the no-info notice and stops after planning when every search came up empty', async () => {
+    const user = userEvent.setup();
+    const trace = makeAgenticTrace({
+      noInfo: true,
+      stages: [
+        {
+          key: 'planning',
+          label: 'Agent Planning',
+          durationMs: 400,
+          data: { skippedSearch: false, totalSteps: 1, steps: [{ tool: 'search_documents', query: 'unrelated topic', chunksFound: 0, rescueTriggered: false, durationMs: 380 }] },
+        },
+      ],
+    });
+    render(<PipelineInspectorTrigger trace={trace} />);
+    await user.click(screen.getByRole('button', { name: /inspect pipeline/i }));
+    expect(screen.getByText(/generation was skipped/i)).toBeInTheDocument();
+    expect(screen.getByText('nothing relevant found')).toBeInTheDocument();
+    expect(screen.queryByText('Answer Generation')).not.toBeInTheDocument();
+  });
+});

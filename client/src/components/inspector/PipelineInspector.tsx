@@ -13,9 +13,12 @@ import {
   X,
   ArrowRight,
   LifeBuoy,
+  Bot,
+  ListTree,
+  MessageCircle,
 } from 'lucide-react';
 import { useState } from 'react';
-import type { PipelineTrace, TraceStage, TraceChunkRef } from '../../lib/types';
+import type { PipelineTrace, TraceStage, TraceChunkRef, AgentStep } from '../../lib/types';
 
 const STAGE_ICONS: Record<TraceStage['key'], React.ComponentType<{ size?: number }>> = {
   rewrite: Wand2,
@@ -25,6 +28,7 @@ const STAGE_ICONS: Record<TraceStage['key'], React.ComponentType<{ size?: number
   rerank: ListFilter,
   generation: Sparkles,
   verification: ShieldCheck,
+  planning: Bot,
 };
 
 function formatMs(ms: number) {
@@ -52,6 +56,25 @@ function ChunkChip({ chunk, tone }: { chunk: TraceChunkRef; tone: 'kept' | 'drop
 
 function StageDetail({ stage }: { stage: TraceStage }) {
   const d = stage.data;
+
+  if (stage.key === 'planning') {
+    if (d.skippedSearch) {
+      return (
+        <p className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]" style={{ background: 'color-mix(in srgb, var(--accent) 8%, transparent)', color: 'var(--ink-muted)' }}>
+          <MessageCircle size={11} className="shrink-0" />
+          The agent decided this didn't need a document search (looked like a greeting or meta question).
+        </p>
+      );
+    }
+    if (!d.steps || d.steps.length === 0) {
+      return <p className="text-xs text-ink-muted">No search steps recorded.</p>;
+    }
+    return (
+      <ul className="flex flex-col gap-1.5 text-xs">
+        {d.steps.map((step, i) => <PlanStepRow key={i} step={step} />)}
+      </ul>
+    );
+  }
 
   if (stage.key === 'rewrite') {
     if (!d.enabled) return <p className="text-xs text-ink-muted">Disabled - the raw question is searched as-is.</p>;
@@ -161,11 +184,52 @@ function StageDetail({ stage }: { stage: TraceStage }) {
             Revised in {formatMs(d.revisionGenerationMs || 0)} and re-checked.
           </p>
         )}
+        {d.researchOnRevision && d.additionalStepsOnRevision && d.additionalStepsOnRevision.length > 0 && (
+          <div>
+            <p className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide text-ink-muted">
+              <ListTree size={11} />
+              searched again for the fix
+            </p>
+            <ul className="flex flex-col gap-1.5">
+              {d.additionalStepsOnRevision.map((step, i) => <PlanStepRow key={i} step={step} />)}
+            </ul>
+          </div>
+        )}
       </div>
     );
   }
 
   return null;
+}
+
+/** One tool-call step in the planning stage's step list, or the "searched again" list under a revision. */
+function PlanStepRow({ step }: { step: AgentStep }) {
+  if (step.tool === 'list_documents') {
+    return (
+      <li className="flex items-center justify-between gap-2 rounded-md px-2 py-1" style={{ background: 'var(--surface)' }}>
+        <span className="flex items-center gap-1.5 text-ink">
+          <ListTree size={11} className="shrink-0 text-accent" />
+          Listed available documents
+        </span>
+        <span className="shrink-0 font-mono text-[10px] text-ink-muted">{formatMs(step.durationMs)}</span>
+      </li>
+    );
+  }
+  return (
+    <li className="flex flex-col gap-0.5 rounded-md px-2 py-1" style={{ background: 'var(--surface)' }}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-ink">
+          <Search size={11} className="shrink-0 text-accent" />
+          "{step.query}"
+        </span>
+        <span className="shrink-0 font-mono text-[10px] text-ink-muted">{formatMs(step.durationMs)}</span>
+      </div>
+      <span className="pl-[17px] text-ink-muted">
+        {step.chunksFound > 0 ? `${step.chunksFound} passage(s) found` : 'nothing relevant found'}
+        {step.rescueTriggered && ' · rescued'}
+      </span>
+    </li>
+  );
 }
 
 function Stat({ label, value, tone }: { label: string; value: string | number | undefined; tone?: 'highlight' }) {
@@ -221,7 +285,7 @@ export function PipelineInspectorTrigger({ trace }: { trace: PipelineTrace }) {
           type="button"
           className="flex items-center gap-1 text-xs text-ink-muted cursor-pointer hover:text-accent transition-colors"
         >
-          <Workflow size={12} />
+          {trace.agentic ? <Bot size={12} /> : <Workflow size={12} />}
           Inspect pipeline
           <span className="font-mono text-[10px] opacity-70">({formatMs(trace.totalMs)})</span>
         </button>
@@ -249,7 +313,18 @@ export function PipelineInspectorTrigger({ trace }: { trace: PipelineTrace }) {
                 <div className="glass-panel rounded-2xl p-5">
                   <div className="mb-4 flex items-center justify-between">
                     <div>
-                      <Dialog.Title className="text-sm font-semibold text-ink">Pipeline Trace</Dialog.Title>
+                      <div className="flex items-center gap-1.5">
+                        <Dialog.Title className="text-sm font-semibold text-ink">Pipeline Trace</Dialog.Title>
+                        {trace.agentic && (
+                          <span
+                            className="flex items-center gap-1 rounded-full px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide"
+                            style={{ background: 'color-mix(in srgb, var(--accent) 14%, transparent)', color: 'var(--accent)' }}
+                          >
+                            <Bot size={9} />
+                            agentic
+                          </span>
+                        )}
+                      </div>
                       <p className="font-mono text-[11px] text-ink-muted">
                         {trace.stages.length} stages · {formatMs(trace.totalMs)} total
                       </p>

@@ -40,9 +40,19 @@ export interface TraceChunkRef {
 
 // Every stage has the same shape - the Inspector renders each one with a
 // `key`-specific detail view, but doesn't need special-casing to know
-// there's a stage, its label, or how long it took.
+// there's a stage, its label, or how long it took. 'planning' only appears
+// in agentic-mode traces (see PipelineTrace.agentic); every other key can
+// appear in either mode.
+export interface AgentStep {
+  tool: 'search_documents' | 'list_documents' | string;
+  query: string | null;
+  chunksFound: number;
+  rescueTriggered: boolean;
+  durationMs: number;
+}
+
 export interface TraceStage {
-  key: 'rewrite' | 'expansion' | 'retrieval' | 'dedup' | 'rerank' | 'generation' | 'verification';
+  key: 'rewrite' | 'expansion' | 'retrieval' | 'dedup' | 'rerank' | 'generation' | 'verification' | 'planning';
   label: string;
   durationMs: number;
   data: {
@@ -60,7 +70,7 @@ export interface TraceStage {
     keywordHits?: number;
     fusedCandidates?: number;
     candidatesConsidered?: number;
-    // dedup
+    // dedup (fixed pipeline) / merge-dedup (agentic)
     before?: number;
     after?: number;
     removed?: number;
@@ -80,6 +90,12 @@ export interface TraceStage {
     issue?: string | null;
     wasRevised?: boolean;
     revisionGenerationMs?: number;
+    researchOnRevision?: boolean;
+    additionalStepsOnRevision?: AgentStep[];
+    // planning (agentic mode only)
+    skippedSearch?: boolean;
+    totalSteps?: number;
+    steps?: AgentStep[];
   };
 }
 
@@ -87,6 +103,9 @@ export interface PipelineTrace {
   stages: TraceStage[];
   totalMs: number;
   noInfo?: boolean;
+  // True when a tool-calling planner decided what/how many times to
+  // search, instead of the fixed pipeline's always-exactly-once search.
+  agentic?: boolean;
 }
 
 export type MessageRole = 'user' | 'assistant';

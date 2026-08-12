@@ -8,16 +8,16 @@ const { dedupeChunks } = require('./dedup');
 const { rerank } = require('./reranker');
 const { verifyAnswer } = require('./selfVerification');
 const { generateAnswerStream } = require('./llm');
-const { buildTrace } = require('./traceBuilder');
+const { buildTrace, buildAgenticTrace } = require('./traceBuilder');
 
 const TOP_K = parseInt(process.env.RETRIEVAL_TOP_K || '5', 10);
 const CANDIDATE_POOL = parseInt(process.env.RETRIEVAL_CANDIDATE_POOL || '15', 10);
 const MIN_RELEVANCE_SCORE = parseFloat(process.env.MIN_RELEVANCE_SCORE || '0.35');
 // Lower and deliberately distinct from MIN_RELEVANCE_SCORE above - this only
-// gates the rerank-rejected-everything rescue path (see retrieveChunks),
-// not the primary retrieval decision. Kept lenient on purpose: the failure
-// mode being guarded against is a false "I don't know" from an overly
-// strict reranker judgment on a broad question, not weak/irrelevant matches.
+// gates the rerank-rejected-everything rescue path (see runRetrieval), not
+// the primary retrieval decision. Kept lenient on purpose: the failure mode
+// being guarded against is a false "I don't know" from an overly strict
+// reranker judgment on a broad question, not weak/irrelevant matches.
 const RERANK_RESCUE_THRESHOLD = parseFloat(process.env.RERANK_RESCUE_THRESHOLD || '0.15');
 const DEDUP_SIMILARITY_THRESHOLD = parseFloat(process.env.DEDUP_SIMILARITY_THRESHOLD || '0.82');
 // How many extra chunks a "broad" question (summarize, compare, overview,
@@ -40,6 +40,12 @@ const ENABLE_SELF_VERIFICATION = process.env.ENABLE_SELF_VERIFICATION !== 'false
 // the response/persisted, for people who'd rather not pay the (small) extra
 // JSON payload size or DB storage.
 const ENABLE_PIPELINE_TRACE = process.env.ENABLE_PIPELINE_TRACE !== 'false';
+// Replaces the fixed rewrite->search->rerank sequence with a tool-calling
+// planner (see agenticRag.js) that decides FOR ITSELF whether a question
+// needs searching at all, and how many times, before generation runs - see
+// the module doc comment on retrieveAndAnswerStream below for the full
+// contract and fallback behavior.
+const ENABLE_AGENTIC_MODE = process.env.ENABLE_AGENTIC_MODE !== 'false';
 
 // Heuristic, not an LLM call on purpose - this only needs to catch the
 // broad-question SHAPE (summaries, overviews, comparisons, "everything/all"
@@ -166,30 +172,38 @@ function toChunkRef(c) {
 }
 
 /**
- * Shared retrieval pipeline used by both the streaming and non-streaming
- * answer paths: rewrite -> expand -> gather -> fuse -> dedupe -> rerank.
- * Returns null chunks (with the "not enough info" answer) if nothing
- * relevant was found, so both callers can check `chunks === null` the same way.
+ * The shared retrieval ENGINE: given a single already-standalone search
+ * query, runs expand -> gather (hybrid search) -> fuse -> dedupe -> rerank,
+ * and returns the resulting chunks. This is the core both retrieval modes
+ * are built on:
+ *   - the fixed pipeline (retrieveChunks below) calls it once, after its
+ *     own query-rewrite step produces a standalone query
+ *   - the agentic planner (agenticRag.js) calls it once per search_documents
+ *     tool call it decides to make, with whatever query the model formulated
  *
- * Also returns `traceRaw`, a bag of timing/count data gathered along the
- * way for the pipeline trace - collected unconditionally (it's just
- * Date.now() calls and array lengths already in scope, no extra cost) and
- * only formatted/attached downstream if ENABLE_PIPELINE_TRACE is on.
+ * Every chunk returned carries a `relevanceScore` (0-1, already normalized)
+ * so callers that merge chunks from MULTIPLE calls to this function (the
+ * agentic path, accumulating across several tool calls) don't need to
+ * separately track which call's `listsUsed.length` a given chunk's raw
+ * rrfScore should be normalized against - see buildSources below.
+ *
+ * Returns `{ chunks: null, ... }` if nothing cleared the relevance bar -
+ * null (not an empty array) specifically means "this query came back
+ * empty", distinct from an empty array which elsewhere means "no query was
+ * even attempted" (see agenticRag.js's skipped-search path).
+ *
+ * @param {string} searchQuery
+ * @param {string[]} [documentIds]
  */
-async function retrieveChunks(question, { documentIds, history = [] } = {}) {
-  const traceRaw = { originalQuestion: question, rewriteEnabled: ENABLE_QUERY_REWRITE, expansionEnabled: ENABLE_QUERY_EXPANSION };
-
-  let t = Date.now();
-  const searchQuery = ENABLE_QUERY_REWRITE ? await rewriteQuery(question, history) : question;
-  traceRaw.searchQuery = searchQuery;
-  traceRaw.rewriteMs = Date.now() - t;
+async function runRetrieval(searchQuery, documentIds) {
+  const traceRaw = {};
 
   // Multi-query retrieval: search with the original query AND a few
   // alternate phrasings in parallel, so wording that doesn't match the
   // document's exact vocabulary still has other angles to land on. All
   // variants' results get fused together by RRF below - a chunk multiple
   // variants agree on naturally outranks one only a single phrasing found.
-  t = Date.now();
+  let t = Date.now();
   const expandedQueries = ENABLE_QUERY_EXPANSION ? await expandQuery(searchQuery) : [];
   traceRaw.expansionMs = Date.now() - t;
   traceRaw.expandedQueries = expandedQueries;
@@ -211,7 +225,7 @@ async function retrieveChunks(question, { documentIds, history = [] } = {}) {
     traceRaw.dedupEnabled = ENABLE_DEDUPLICATION;
     traceRaw.dedupMs = 0;
     traceRaw.noInfo = true;
-    return { chunks: null, searchQuery, listsUsed, traceRaw };
+    return { chunks: null, listsUsed, traceRaw };
   }
 
   const fusedPool = fused
@@ -259,7 +273,7 @@ async function retrieveChunks(question, { documentIds, history = [] } = {}) {
         traceRaw.kept = [];
         traceRaw.dropped = candidatePool.map(toChunkRef);
         traceRaw.noInfo = true;
-        return { chunks: null, searchQuery, listsUsed, traceRaw };
+        return { chunks: null, listsUsed, traceRaw };
       }
     } else {
       finalChunks = rerankKept;
@@ -272,7 +286,7 @@ async function retrieveChunks(question, { documentIds, history = [] } = {}) {
       traceRaw.kept = [];
       traceRaw.dropped = candidatePool.map(toChunkRef);
       traceRaw.noInfo = true;
-      return { chunks: null, searchQuery, listsUsed, traceRaw };
+      return { chunks: null, listsUsed, traceRaw };
     }
     finalChunks = candidatePool.slice(0, topK);
   }
@@ -283,13 +297,53 @@ async function retrieveChunks(question, { documentIds, history = [] } = {}) {
   traceRaw.kept = finalChunks.map(toChunkRef);
   traceRaw.dropped = candidatePool.filter((c) => !keptIds.has(c.id)).map(toChunkRef);
 
-  return { chunks: finalChunks, searchQuery, listsUsed, traceRaw };
+  // Normalize each chunk's relevance score NOW, against THIS call's own
+  // listsUsed.length - callers merging chunks from multiple runRetrieval
+  // calls (agenticRag.js) can then treat relevanceScore as directly
+  // comparable across calls without re-deriving it later.
+  const scoredChunks = finalChunks.map((c) => ({ ...c, relevanceScore: normalizeRrfScore(c.rrfScore, listsUsed.length) }));
+
+  return { chunks: scoredChunks, listsUsed, traceRaw };
+}
+
+/**
+ * Fixed-pipeline retrieval: rewrite the question into a standalone query
+ * (using conversation history), then run it through runRetrieval once.
+ * This is the deterministic, always-exactly-one-search path used when
+ * ENABLE_AGENTIC_MODE is off, or as the fallback if agentic planning fails
+ * (see retrieveAndAnswerStream).
+ */
+async function retrieveChunks(question, { documentIds, history = [] } = {}) {
+  let t = Date.now();
+  const searchQuery = ENABLE_QUERY_REWRITE ? await rewriteQuery(question, history) : question;
+  const rewriteMs = Date.now() - t;
+
+  const { chunks, listsUsed, traceRaw: retrievalTraceRaw } = await runRetrieval(searchQuery, documentIds);
+
+  const traceRaw = {
+    mode: 'fixed',
+    originalQuestion: question,
+    rewriteEnabled: ENABLE_QUERY_REWRITE,
+    searchQuery,
+    rewriteMs,
+    ...retrievalTraceRaw,
+  };
+
+  return { chunks, searchQuery, listsUsed, traceRaw };
 }
 
 function buildSources(finalChunks, listsUsed, citedNumbers) {
   return finalChunks.map((c, i) => {
     const sourceNumber = i + 1;
-    const displayScore = c.rrfScore !== undefined ? normalizeRrfScore(c.rrfScore, listsUsed.length) : 0;
+    // Prefer a score already normalized by runRetrieval - required for
+    // chunks accumulated across multiple search calls (agentic mode), and
+    // just as correct for the single-call fixed pipeline (same formula,
+    // computed one call earlier - see runRetrieval's comment on this field).
+    const displayScore = c.relevanceScore !== undefined
+      ? c.relevanceScore
+      : c.rrfScore !== undefined
+        ? normalizeRrfScore(c.rrfScore, listsUsed.length)
+        : 0;
     return {
       sourceNumber,
       cited: citedNumbers.has(sourceNumber),
@@ -305,10 +359,12 @@ function buildSources(finalChunks, listsUsed, citedNumbers) {
 }
 
 /**
- * Streaming retrieve-then-answer pipeline. Retrieval itself (rewrite, search,
- * fuse, rerank) is NOT streamed - it's fast enough that streaming it wouldn't
- * meaningfully help, and streaming only the generation step keeps this much
- * simpler. Yields events for a route handler to forward as SSE:
+ * Streaming retrieve-then-answer pipeline. Retrieval itself is NOT
+ * streamed - fixed-pipeline retrieval is one rewrite + one search, fast
+ * enough that streaming it wouldn't meaningfully help; agentic retrieval
+ * (below) involves a few extra planning calls but is still short relative
+ * to generation. Only the generation step streams. Yields events for a
+ * route handler to forward as SSE:
  *   { type: 'sources', sources }  - as soon as retrieval completes (cited flags not yet known)
  *   { type: 'chunk', text }       - repeated, as the answer streams in (fired again
  *                                    for a revision pass, if one happens)
@@ -317,25 +373,60 @@ function buildSources(finalChunks, listsUsed, citedNumbers) {
  *   { type: 'done', answer, sources, verified, wasRevised, trace } - final state
  *   { type: 'no_info', trace }    - nothing relevant found, no generation call made
  *
- * Self-verification runs after a first answer streams in: one cheap batched
- * call checks whether the answer is actually supported by its sources. If
- * not, ONE revision pass runs with the specific critique fed back into the
- * prompt, and streams in as a visible correction rather than a silent retry.
- * Capped at a single revision regardless of outcome - this is meant to catch
- * genuine mistakes, not loop indefinitely chasing a perfect score.
+ * RETRIEVAL MODE: when ENABLE_AGENTIC_MODE is on, a tool-calling planner
+ * (agenticRag.js) decides for itself whether the question needs searching
+ * at all, and how many times, instead of always running exactly one
+ * rewrite-then-search pass. If planning itself throws (a tool-calling API
+ * error, for instance) BEFORE any event has been yielded, this falls back
+ * to the fixed pipeline for that single request rather than failing it -
+ * once past the first yielded event a fallback can't happen cleanly (the
+ * client would see a confusing partial-then-restarted response), the same
+ * constraint documented in llm.js's streaming fallback.
+ *
+ * SELF-VERIFICATION: runs after a first answer streams in - one cheap
+ * batched call checks whether the answer is actually supported by its
+ * sources. If not, ONE revision pass runs with the specific critique fed
+ * back into the prompt. In agentic mode, that critique also drives a small
+ * follow-up search (capped at 2 planner steps) for better source material
+ * before regenerating - not just a reworded retry over the same chunks -
+ * gated by ENABLE_AGENTIC_RESEARCH_ON_REVISION. Capped at a single revision
+ * regardless of outcome either way - this is meant to catch genuine
+ * mistakes, not loop indefinitely chasing a perfect score.
  *
  * `trace` (present when ENABLE_PIPELINE_TRACE is on) is a stage-by-stage
- * record of what the pipeline actually did for this query - see
- * traceBuilder.js for the shape. It's built from data already gathered
- * during the run, so producing it costs no extra API calls.
+ * record of what the pipeline actually did for this query, built from data
+ * already gathered during the run - producing it costs no extra API calls.
+ * See traceBuilder.js for the fixed-pipeline shape and agenticRag.js /
+ * traceBuilder.js's buildAgenticTrace for the agentic shape.
  */
 async function* retrieveAndAnswerStream(question, options = {}) {
   const streamStart = Date.now();
-  const { chunks, listsUsed, traceRaw } = await retrieveChunks(question, options);
+  const { documentIds, history = [] } = options;
+
+  let retrieval = null;
+  if (ENABLE_AGENTIC_MODE) {
+    try {
+      // Lazy require avoids a require cycle: agenticRag.js needs rag.js's
+      // runRetrieval/buildSources/NO_INFO_ANSWER, and this is the only
+      // place rag.js needs anything back from agenticRag.js.
+      const { runAgenticRetrieval } = require('./agenticRag');
+      retrieval = await runAgenticRetrieval(question, documentIds, history);
+    } catch (err) {
+      console.warn(`[rag] agentic planning failed (${err.message}), falling back to the fixed pipeline for this query.`);
+      retrieval = null;
+    }
+  }
+  if (!retrieval) {
+    retrieval = await retrieveChunks(question, { documentIds, history });
+  }
+
+  const { chunks, listsUsed, traceRaw } = retrieval;
 
   if (!chunks) {
     traceRaw.totalMs = Date.now() - streamStart;
-    const trace = ENABLE_PIPELINE_TRACE ? buildTrace(traceRaw) : null;
+    const trace = ENABLE_PIPELINE_TRACE
+      ? traceRaw.mode === 'agentic' ? buildAgenticTrace(traceRaw) : buildTrace(traceRaw)
+      : null;
     yield { type: 'no_info', answer: NO_INFO_ANSWER, trace };
     return;
   }
@@ -343,19 +434,19 @@ async function* retrieveAndAnswerStream(question, options = {}) {
   const preliminarySources = buildSources(chunks, listsUsed, new Set());
   yield { type: 'sources', sources: preliminarySources };
 
-  const history = options.history || [];
+  let workingChunks = chunks;
   let fullAnswer = '';
   let t = Date.now();
-  for await (const textChunk of generateAnswerStream(question, chunks, history)) {
+  for await (const textChunk of generateAnswerStream(question, workingChunks, history)) {
     fullAnswer += textChunk;
     yield { type: 'chunk', text: textChunk };
   }
   traceRaw.generationMs = Date.now() - t;
-  traceRaw.chunksUsedCount = chunks.length;
+  traceRaw.chunksUsedCount = workingChunks.length;
   traceRaw.answerLength = fullAnswer.length;
 
   let citedNumbers = extractCitedSourceNumbers(fullAnswer);
-  let finalSources = buildSources(chunks, listsUsed, citedNumbers);
+  let finalSources = buildSources(workingChunks, listsUsed, citedNumbers);
   let verified = true;
   let wasRevised = false;
   traceRaw.verificationEnabled = ENABLE_SELF_VERIFICATION;
@@ -369,18 +460,47 @@ async function* retrieveAndAnswerStream(question, options = {}) {
     if (!check.passed) {
       yield { type: 'revising', issue: check.issue };
 
+      // Agentic mode gets one more chance to go find better source
+      // material for the specific thing verification flagged, instead of
+      // only rewording the same chunks - a small, capped follow-up search
+      // rather than a full re-plan.
+      const ENABLE_AGENTIC_RESEARCH_ON_REVISION = process.env.ENABLE_AGENTIC_RESEARCH_ON_REVISION !== 'false';
+      if (ENABLE_AGENTIC_MODE && ENABLE_AGENTIC_RESEARCH_ON_REVISION && traceRaw.mode === 'agentic') {
+        try {
+          const { runAgenticRetrieval } = require('./agenticRag');
+          const researchStart = Date.now();
+          const research = await runAgenticRetrieval(
+            `The previous answer to "${question}" had this problem: ${check.issue}. Search for information that would fix it.`,
+            documentIds,
+            history,
+            { maxSteps: 2 }
+          );
+          traceRaw.researchOnRevisionMs = Date.now() - researchStart;
+          traceRaw.researchOnRevision = true;
+          traceRaw.additionalStepsOnRevision = research.traceRaw?.steps || [];
+          if (research.chunks && research.chunks.length > 0) {
+            const seenIds = new Set(workingChunks.map((c) => c.id));
+            const merged = [...workingChunks, ...research.chunks.filter((c) => !seenIds.has(c.id))];
+            workingChunks = ENABLE_DEDUPLICATION ? dedupeChunks(merged, DEDUP_SIMILARITY_THRESHOLD) : merged;
+          }
+        } catch (err) {
+          console.warn(`[rag] re-search on revision failed (${err.message}), revising with the existing chunks only.`);
+        }
+      }
+
       let revisedAnswer = '';
       const revision = { previousAnswer: fullAnswer, issues: check.issue };
       t = Date.now();
-      for await (const textChunk of generateAnswerStream(question, chunks, history, revision)) {
+      for await (const textChunk of generateAnswerStream(question, workingChunks, history, revision)) {
         revisedAnswer += textChunk;
         yield { type: 'chunk', text: textChunk };
       }
       traceRaw.revisionGenerationMs = Date.now() - t;
+      traceRaw.chunksUsedCount = workingChunks.length;
 
       fullAnswer = revisedAnswer;
       citedNumbers = extractCitedSourceNumbers(fullAnswer);
-      finalSources = buildSources(chunks, listsUsed, citedNumbers);
+      finalSources = buildSources(workingChunks, listsUsed, citedNumbers);
       wasRevised = true;
 
       // One more check on the revised answer, purely for the `verified`
@@ -395,9 +515,20 @@ async function* retrieveAndAnswerStream(question, options = {}) {
   }
 
   traceRaw.totalMs = Date.now() - streamStart;
-  const trace = ENABLE_PIPELINE_TRACE ? buildTrace(traceRaw) : null;
+  const trace = ENABLE_PIPELINE_TRACE
+    ? traceRaw.mode === 'agentic' ? buildAgenticTrace(traceRaw) : buildTrace(traceRaw)
+    : null;
 
   yield { type: 'done', answer: fullAnswer, sources: finalSources, verified, wasRevised, trace };
 }
 
-module.exports = { retrieveAndAnswerStream, NO_INFO_ANSWER, extractCitedSourceNumbers, computeTopK, BROAD_QUESTION_RE };
+module.exports = {
+  retrieveAndAnswerStream,
+  NO_INFO_ANSWER,
+  extractCitedSourceNumbers,
+  computeTopK,
+  BROAD_QUESTION_RE,
+  runRetrieval,
+  buildSources,
+  toChunkRef,
+};
