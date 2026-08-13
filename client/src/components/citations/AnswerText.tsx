@@ -1,8 +1,10 @@
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { isValidElement } from 'react';
 import type { Components } from 'react-markdown';
 import { transformCitationsToLinks, isCitationHref } from '../../lib/citations';
 import { CitationBadge } from './CitationBadge';
+import { MermaidDiagram } from './MermaidDiagram';
 import type { Source } from '../../lib/types';
 
 /**
@@ -45,14 +47,31 @@ export function AnswerText({ content, sources }: { content: string; sources?: So
     ul: ({ children }) => <ul className="mb-3 ml-1 list-disc space-y-1 pl-4 text-[15px] text-ink last:mb-0">{children}</ul>,
     ol: ({ children }) => <ol className="mb-3 ml-1 list-decimal space-y-1 pl-4 text-[15px] text-ink last:mb-0">{children}</ol>,
     li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-    code: ({ children }) => (
-      <code className="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[13px] text-ink">{children}</code>
-    ),
-    pre: ({ children }) => (
-      <pre className="mb-3 overflow-x-auto rounded-xl bg-surface-raised p-3 font-mono text-[13px] text-ink last:mb-0">
-        {children}
-      </pre>
-    ),
+    code: ({ className, children }) => {
+      // Fenced ```mermaid blocks get rendered as an actual diagram instead
+      // of a plain code block - inline code (no className) and every other
+      // fenced language fall through to the normal styling below.
+      if (typeof className === 'string' && className.includes('language-mermaid')) {
+        return <MermaidDiagram code={String(children)} />;
+      }
+      return <code className="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[13px] text-ink">{children}</code>;
+    },
+    pre: ({ children }) => {
+      // A mermaid code block's own `code` override above already renders a
+      // fully-styled diagram container - skip the monospace <pre> box in
+      // that one case so a diagram isn't nested inside code-block chrome.
+      const soleChild = Array.isArray(children) ? children[0] : children;
+      const isMermaidBlock =
+        isValidElement(soleChild) &&
+        typeof (soleChild.props as { className?: string }).className === 'string' &&
+        (soleChild.props as { className: string }).className.includes('language-mermaid');
+      if (isMermaidBlock) return <>{children}</>;
+      return (
+        <pre className="mb-3 overflow-x-auto rounded-xl bg-surface-raised p-3 font-mono text-[13px] text-ink last:mb-0">
+          {children}
+        </pre>
+      );
+    },
     blockquote: ({ children }) => (
       <blockquote className="mb-3 border-l-2 border-accent/40 pl-3 text-ink-muted last:mb-0">{children}</blockquote>
     ),

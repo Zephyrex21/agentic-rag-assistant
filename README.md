@@ -130,6 +130,12 @@ Both paths share the same retrieval engine (`runRetrieval` in `rag.js`: expand �
 - Organize documents into folders, or leave them uncategorized — folders are a pure organizational layer, deleting one never deletes the documents inside it
 - Filter documents by filename or by folder
 
+**Answer formatting**
+- The generation prompt actively asks for structure that matches the content's shape — markdown tables for comparisons/structured data, bulleted lists for enumerable items, numbered lists only when order matters, bold for scannable key terms, headers for genuinely multi-part answers, code blocks for code/commands/config — and explicitly avoids forcing structure onto a simple one-fact answer that's better as a sentence
+- A lightweight regex hint (`formatHint` in `llm.js`) nudges toward the single most likely structure for comparison-, steps-, and list-shaped questions specifically, at zero extra latency or cost, layered on top of the model's own judgment rather than replacing it
+- Sparingly, for content that describes an actual process, sequence, or architecture, the model can emit a Mermaid diagram using a fenced `mermaid` code block, rendered client-side as a real diagram — lazy-loaded so its bundle cost is paid only by conversations that actually contain one, with a plain-code-block fallback if a diagram ever fails to render rather than breaking the message
+- All of this renders through the same citation-aware pipeline as plain prose — a "(Source 1)" citation works identically inside a table cell, list item, or paragraph
+
 **Citations**
 - Inline citation badges that expand into source cards (excerpt, full text, relevance score, chunk index)
 - Distinguishes sources the model actually cited from ones merely retrieved
@@ -148,7 +154,7 @@ Both paths share the same retrieval engine (`runRetrieval` in `rag.js`: expand �
 | Layer | Technology |
 |---|---|
 | Backend | Node.js, Express |
-| Frontend | React, Vite, TypeScript, Tailwind CSS, Framer Motion |
+| Frontend | React, Vite, TypeScript, Tailwind CSS, Framer Motion, `react-markdown` + `remark-gfm`, Mermaid (lazy-loaded, diagrams only) |
 | Testing | Vitest + React Testing Library (frontend), standalone Node scripts (backend) |
 | LLM | Groq (generation + reranking/rewriting/verification), Mistral AI (optional provider-level fallback) |
 | Embeddings | Jina AI (`jina-embeddings-v3`) |
@@ -223,6 +229,7 @@ All configuration lives in `server/.env` (see `.env.example` for the full list w
 | `AGENTIC_MAX_STEPS` | Max planner round-trips per question (default `3`) - a single round-trip can still request multiple parallel searches |
 | `AGENTIC_PLANNER_MODEL`, `AGENTIC_PLANNER_MODEL_FALLBACK` | Model used for retrieval planning - defaults to `UTILITY_MODEL`, independently overridable |
 | `ENABLE_AGENTIC_RESEARCH_ON_REVISION` | On a self-verification failure in agentic mode, run one small extra search guided by the critique before revising (default `true`) |
+| `ENABLE_FORMAT_HINTS` | Nudge toward a table/numbered-list/bulleted-list for comparison/steps/enumerable-shaped questions specifically (default `true`) |
 | `QUERY_EXPANSION_COUNT` | How many alternate phrasings to generate for multi-query retrieval (0 disables it) |
 | `DEDUP_SIMILARITY_THRESHOLD` | Word-overlap threshold above which two candidate chunks are treated as near-duplicates |
 | `ADAPTIVE_TOPK_BONUS` | Extra chunks retrieved for broad/summary-style questions on top of `RETRIEVAL_TOP_K` |
@@ -282,7 +289,7 @@ To check your actual API keys against the live Groq and Jina APIs (this one does
 npm run diagnose:keys
 ```
 
-The frontend has its own Vitest suite — pure-logic tests (citation parsing, Markdown export) plus component tests (Composer send behavior, MessageBubble citation/verification rendering) using React Testing Library. No mocking of the backend needed for any of these; components that depend on Context are tested for their own rendering logic, not integration with a live API:
+The frontend has its own Vitest suite — pure-logic tests (citation parsing, Markdown export) plus component tests (Composer send behavior, MessageBubble citation/verification rendering, the Pipeline Inspector's fixed vs. agentic trace rendering, `AnswerText`'s structured markdown + Mermaid diagram routing with `mermaid` mocked for determinism) using React Testing Library. No mocking of the backend needed for any of these; components that depend on Context are tested for their own rendering logic, not integration with a live API:
 
 ```bash
 cd client

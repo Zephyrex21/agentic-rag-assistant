@@ -66,6 +66,7 @@ app.get('/health', (req, res) => {
       deduplication: process.env.ENABLE_DEDUPLICATION !== 'false',
       adaptiveTopK: process.env.ENABLE_ADAPTIVE_TOPK !== 'false',
       selfVerification: process.env.ENABLE_SELF_VERIFICATION !== 'false',
+      formatHints: process.env.ENABLE_FORMAT_HINTS !== 'false',
       pipelineTrace: process.env.ENABLE_PIPELINE_TRACE !== 'false',
     },
     ...(modelWarnings.length > 0 ? { modelWarnings } : {}),

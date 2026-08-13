@@ -18,6 +18,34 @@ const FALLBACK_MODEL = process.env.GENERATION_MODEL_FALLBACK || 'openai/gpt-oss-
 // "-latest" alias so this doesn't go stale the way a pinned version could.
 const MISTRAL_FALLBACK_MODEL = process.env.MISTRAL_FALLBACK_MODEL || 'mistral-large-latest';
 
+// Nudges the model toward the ONE structural element most likely to fit a
+// question's shape, on top of the general formatting rule below - same
+// "cheap heuristic pairs with a general instruction" pattern as
+// rag.js's BROAD_QUESTION_RE/adaptive top-K: zero extra latency/cost, and
+// improves reliability for the most common structure-worthy question
+// shapes rather than leaving it entirely to the model's own judgment every
+// time. Deliberately phrased as a suggestion ("if the sources support it"),
+// not a mandate - a comparison question whose sources don't actually have
+// comparable attributes shouldn't get a table forced onto it.
+const ENABLE_FORMAT_HINTS = process.env.ENABLE_FORMAT_HINTS !== 'false';
+const COMPARISON_QUESTION_RE = /\b(compare|comparison|difference between|vs\.?|versus|which is better|pros and cons)\b/i;
+const STEPS_QUESTION_RE = /\b(steps|how do i|how to|walk me through|instructions for|process for)\b/i;
+const LIST_QUESTION_RE = /\b(list|what are the|features of|options for|types of)\b/i;
+
+function formatHint(question) {
+  if (!ENABLE_FORMAT_HINTS || !question) return '';
+  if (COMPARISON_QUESTION_RE.test(question)) {
+    return "This looks like a comparison question - if the sources give comparable attributes for each thing, a markdown table is probably the clearest format.\n";
+  }
+  if (STEPS_QUESTION_RE.test(question)) {
+    return 'This looks like a request for a process or set of steps - if the sources describe an order, a numbered list is probably the clearest format.\n';
+  }
+  if (LIST_QUESTION_RE.test(question)) {
+    return 'This looks like a request for a set of items - if the sources support it, a bulleted list is probably the clearest format.\n';
+  }
+  return '';
+}
+
 function buildPrompt(question, chunks, history = [], revision = null) {
   const historyBlock = history.length
     ? `CONVERSATION SO FAR:\n${history.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n')}\n\n`
@@ -60,11 +88,18 @@ ANSWER:`;
 
 1. Answer using only information found in the sources. Do not use outside knowledge.
 2. If the sources don't contain enough information to answer, say so clearly instead of guessing.
-3. When you use information from a source, mention it inline like "(Source 1)" or "(Source 2)" right next to the specific claim it supports - not bunched into one citation dump at the end of the answer. If a claim draws on more than one source, cite all of them together, e.g. "(Source 1, Source 3)".
-4. Match the length and depth of your answer to what the question actually asks for. A narrow factual question ("what year", "how much") deserves a short, direct answer - a sentence or two. A broad question (e.g. "summarize this", "explain X", "what does this document cover", "tell me about...") deserves a thorough, well-organized answer that actually covers the relevant material - multiple paragraphs if the sources support it. Never compress a genuinely broad question down to one line just to be brief, and never pad a narrow question with filler just to sound thorough - match the answer to the question, not a fixed length.
+3. When you use information from a source, mention it inline like "(Source 1)" or "(Source 2)" right next to the specific claim it supports - not bunched into one citation dump at the end of the answer. If a claim draws on more than one source, cite all of them together, e.g. "(Source 1, Source 3)". This applies inside a table cell or list item exactly the same as in a sentence.
+4. Match the length and depth of your answer to what the question actually asks for. A narrow factual question ("what year", "how much") deserves a short, direct answer - a sentence or two. A broad question (e.g. "summarize this", "explain X", "what does this document cover", "tell me about...") deserves a thorough, well-organized answer that actually covers the relevant material - multiple paragraphs, and structure per rule 6, if the sources support it. Never compress a genuinely broad question down to one line just to be brief, and never pad a narrow question with filler just to sound thorough - match the answer to the question, not a fixed length.
 5. When multiple sources touch the same point, synthesize them into one coherent answer instead of restating each source in its own separate sentence or paragraph - the sources are raw material to reason over, not a list to transcribe in order.
-6. Default to clear prose. Only reach for a bulleted or numbered list when the sources themselves describe something inherently listlike (steps, options, specifications, a set of named items) - don't bullet-ify an answer that's naturally a few connected sentences.
-7. If the conversation so far gives context for this question (e.g. "it", "that", "the second one"), use it to understand what's being asked - but still answer only from the sources below.
+6. Format your answer to fit the shape of the content, the way a well-written technical document would - not maximal formatting, matched formatting:
+   - Use a markdown table when comparing two or more things across the same attributes, or presenting structured data with multiple fields per item (specs, pricing tiers, feature comparisons).
+   - Use a bulleted list for a set of related but non-sequential items (features, options, considerations). Use a numbered list only when order actually matters (steps, ranked items).
+   - Use bold for the specific terms, names, and values worth scanning for - not for every other phrase.
+   - Use short headers (##, ###) only to break up a genuinely multi-part or multi-section answer (e.g. summarizing a document with several distinct topics) - never for a single short answer.
+   - Use a code block for actual code, commands, file paths, or configuration values mentioned in the sources.
+   - Sparingly, when the sources describe an actual process, sequence, architecture, or hierarchy that's genuinely easier to follow as a diagram than as a list, you may include ONE mermaid diagram using a \`\`\`mermaid fenced code block (e.g. \`flowchart LR\`, \`sequenceDiagram\`). This is an occasional option, not a default - most answers, even structured ones, don't need one. Never put a "(Source N)" citation inside the diagram itself (it isn't valid inside diagram syntax and won't render correctly) - cite the relevant sources in the prose around the diagram instead.
+   - If the content is a single fact or a few connected sentences, just write prose - don't force a list, table, header, or diagram onto something that doesn't need one.
+${formatHint(question)}7. If the conversation so far gives context for this question (e.g. "it", "that", "the second one"), use it to understand what's being asked - but still answer only from the sources below.
 
 ${historyBlock}${revisionBlock}SOURCES:
 ${context}
@@ -209,4 +244,4 @@ async function* generateAnswerStream(question, chunks, history = [], revision = 
   throw new Error(message);
 }
 
-module.exports = { generateAnswer, generateAnswerStream, buildPrompt, MODEL };
+module.exports = { generateAnswer, generateAnswerStream, buildPrompt, formatHint, MODEL };
