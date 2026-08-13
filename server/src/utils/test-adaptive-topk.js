@@ -19,6 +19,9 @@ const broadQuestions = [
   'List all the features mentioned.',
   'Tell me about this company.',
   'What does this document cover?',
+  'What is this readme about?',
+  'what is this document about?',
+  "What's this repo about?",
 ];
 
 const narrowQuestions = [

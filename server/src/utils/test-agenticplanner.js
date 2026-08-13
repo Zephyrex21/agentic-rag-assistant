@@ -8,7 +8,7 @@
  * the eval harness and manual testing against a real Groq key.
  * Run with: npm run test:agenticplanner
  */
-const { buildPlannerSystemPrompt, parseToolArgs, MAX_STEPS } = require('../services/agenticRag');
+const { buildPlannerSystemPrompt, parseToolArgs, resolveSearchQuery, MAX_STEPS } = require('../services/agenticRag');
 
 console.log('=== Agentic Planner Test ===\n');
 
@@ -52,3 +52,35 @@ console.assert(JSON.stringify(parseToolArgs('null')) === '{}', 'FAIL: JSON null 
 console.log('✅ Non-object JSON (string/number/null) fails soft to {} rather than being returned as-is');
 
 console.log('\n✅ All agentic planner pure-function tests passed.');
+
+// --- resolveSearchQuery: the fallback that fixes a real bug ---
+// Before this existed, a search_documents tool call with a missing/malformed
+// `query` argument silently fell through to "unknown tool" and found
+// NOTHING - producing a false "not enough information" answer even for an
+// easy, obviously-answerable question. This is the regression test for that.
+console.log('\n=== resolveSearchQuery Test ===\n');
+
+const withGoodQuery = resolveSearchQuery({ query: 'What is Cryptex?' }, 'the original question');
+console.assert(withGoodQuery.query === 'What is Cryptex?', 'FAIL: a valid query argument should be used as-is');
+console.assert(withGoodQuery.usedFallback === false, 'FAIL: usedFallback should be false when the argument was valid');
+console.log('✅ A valid query argument is used as-is, no fallback triggered');
+
+const withMissingQuery = resolveSearchQuery({}, 'what is this readme about?');
+console.assert(withMissingQuery.query === 'what is this readme about?', 'FAIL: a missing query argument should fall back to the original question, not silently find nothing');
+console.assert(withMissingQuery.usedFallback === true, 'FAIL: usedFallback should be true when falling back');
+console.log('✅ A missing query argument falls back to the original question instead of silently finding nothing');
+
+const withEmptyQuery = resolveSearchQuery({ query: '   ' }, 'the original question');
+console.assert(withEmptyQuery.query === 'the original question', 'FAIL: a whitespace-only query should also trigger the fallback');
+console.assert(withEmptyQuery.usedFallback === true, 'FAIL: usedFallback should be true for a whitespace-only query');
+console.log('✅ A whitespace-only query argument also falls back correctly');
+
+const withWrongType = resolveSearchQuery({ query: 42 }, 'the original question');
+console.assert(withWrongType.query === 'the original question', 'FAIL: a non-string query argument should fall back rather than being used as-is');
+console.log('✅ A non-string query argument (wrong type) falls back correctly');
+
+const withUndefinedArgs = resolveSearchQuery(undefined, 'the original question');
+console.assert(withUndefinedArgs.query === 'the original question', 'FAIL: entirely missing args object should fall back without throwing');
+console.log('✅ A completely missing args object falls back without throwing');
+
+console.log('\n✅ All resolveSearchQuery tests passed.');

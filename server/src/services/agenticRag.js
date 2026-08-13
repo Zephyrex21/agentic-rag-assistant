@@ -94,15 +94,34 @@ async function callPlannerTurn(messages, maxSteps) {
  * caller to accumulate) and a trace-friendly step summary (counts only,
  * never full chunk text - same discipline as the rest of the trace system).
  */
-async function executeToolCalls(toolCalls, documentIds) {
+/**
+ * Decides what search query to actually use for a search_documents call -
+ * the model's own query argument if it provided a usable one, or the
+ * original question as a fallback if the argument was missing/malformed
+ * (a known reliability quirk of smaller/faster tool-calling models). Pure
+ * and separated from executeToolCalls specifically so this decision is
+ * unit-testable without a live model or network call - see
+ * test-agenticplanner.js.
+ */
+function resolveSearchQuery(args, fallbackQuery) {
+  const hasUsableQuery = typeof args?.query === 'string' && args.query.trim().length > 0;
+  return { query: hasUsableQuery ? args.query.trim() : fallbackQuery, usedFallback: !hasUsableQuery };
+}
+
+async function executeToolCalls(toolCalls, documentIds, fallbackQuery) {
   return Promise.all(
     toolCalls.map(async (toolCall) => {
       const stepStart = Date.now();
       const name = toolCall.function?.name;
       const args = parseToolArgs(toolCall.function?.arguments);
 
-      if (name === 'search_documents' && typeof args.query === 'string' && args.query.trim()) {
-        const query = args.query.trim();
+      if (name === 'search_documents') {
+        // A malformed/missing query argument should never mean "silently
+        // find nothing" - falling back to the original question is a
+        // worse query than whatever the model intended, but it's still a
+        // real search, not a wasted turn that makes an easy, obviously
+        // answerable question come back as "not enough information."
+        const { query, usedFallback } = resolveSearchQuery(args, fallbackQuery);
         const result = await runRetrieval(query, documentIds);
         const chunks = result.chunks || [];
         const summary = chunks.length
@@ -110,6 +129,9 @@ async function executeToolCalls(toolCalls, documentIds) {
               .map((c) => `${c.filename}${c.section ? ` (${c.section})` : ''}`)
               .join(', ')}`
           : 'No relevant passages found for this query.';
+        if (usedFallback) {
+          console.warn('[agenticRag] search_documents call had no usable query argument, fell back to the original question.');
+        }
         return {
           toolCallId: toolCall.id,
           summary,
@@ -137,6 +159,7 @@ async function executeToolCalls(toolCalls, documentIds) {
         };
       }
 
+      console.warn(`[agenticRag] planner requested an unrecognized tool "${name}" - ignored.`);
       return {
         toolCallId: toolCall.id,
         summary: `Unknown tool "${name}" - ignored.`,
@@ -196,7 +219,7 @@ async function runAgentPlanner(question, history, documentIds, maxSteps = MAX_ST
     messages.push(msg);
 
     // eslint-disable-next-line no-await-in-loop
-    const results = await executeToolCalls(msg.tool_calls, documentIds);
+    const results = await executeToolCalls(msg.tool_calls, documentIds, question);
 
     for (const r of results) {
       for (const c of r.chunks) {
@@ -277,6 +300,7 @@ module.exports = {
   runAgentPlanner,
   buildPlannerSystemPrompt,
   parseToolArgs,
+  resolveSearchQuery,
   PLANNER_MODEL,
   MAX_STEPS,
 };

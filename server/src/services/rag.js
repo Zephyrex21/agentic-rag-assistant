@@ -54,7 +54,7 @@ const ENABLE_AGENTIC_MODE = process.env.ENABLE_AGENTIC_MODE !== 'false';
 // "broad question" concept the rerank prompt already reasons about in
 // reranker.js - this just also widens how many chunks survive to get there.
 const BROAD_QUESTION_RE =
-  /\b(summarize|summarise|overview|everything|all of|entire|compare|comparison|difference between|list all|each|every|explain (the )?(whole|full)|what does .* cover|tell me about)\b/i;
+  /\b(summarize|summarise|overview|everything|all of|entire|compare|comparison|difference between|list all|each|every|explain (the )?(whole|full)|what does .* cover|tell me about|what is this .*(about|for)|what('?s| is) (this|the) (document|file|readme|repo|project|repository) about)\b/i;
 
 /**
  * Widens TOP_K for questions that read as broad/synthesis-style rather than
