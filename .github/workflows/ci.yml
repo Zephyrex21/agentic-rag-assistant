@@ -57,6 +57,7 @@ jobs:
       - run: npm run test:tracebuilder
       - run: npm run test:agenttools
       - run: npm run test:agenticplanner
+      - run: npm run test:embeddings
 
       # HTTP-level route tests (Express + supertest, DB/service layer
       # mocked with node:test's built-in mock.method) - a different layer

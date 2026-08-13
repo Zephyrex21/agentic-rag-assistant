@@ -274,6 +274,7 @@ npm run test:adaptive-topk # broad-vs-narrow question topK classification
 npm run test:tracebuilder  # pipeline trace formatting, incl. no_info/rescue/disabled-stage shapes, both fixed and agentic shapes
 npm run test:agenttools    # tool schema validity, document-scope filtering
 npm run test:agenticplanner # planner system prompt content, tool-argument parsing
+npm run test:embeddings    # concurrency limiter + 429 retry/backoff (real fetch mocked, no live Jina key needed)
 ```
 
 The agentic planner's actual tool-calling LOOP (deciding what to search, executing the calls, looping) isn't covered by a standalone test - it makes real Groq tool-calling API calls, the same reason `rerank()`, `rewriteQuery()`, and `verifyAnswer()` aren't directly unit tested either, only their pure prompt-building/response-parsing pieces are (see `test:reranker`, etc.). Its live behavior is exercised by the eval harness below and by manual testing against a real Groq key.
@@ -355,6 +356,8 @@ By default the backend accepts requests from any origin (fine for local dev and 
 - The planner is capped at `AGENTIC_MAX_STEPS` (default 3) round-trips - a question that genuinely needs more than that many distinct searches will proceed with whatever's been gathered so far rather than continuing indefinitely
 - No authentication layer — not required for local/single-user use, would be needed before any public deployment
 - Documents uploaded before `migration_002_hybrid_search.sql` need re-uploading to benefit from hybrid search (their chunks predate the keyword-search index)
+- Jina's free tier caps embedding calls at 2 concurrent requests. Multi-query retrieval and agentic mode can both fire more than 2 in parallel for a single question, so `embeddings.js` queues excess calls behind a concurrency limiter (`JINA_MAX_CONCURRENCY`, default 2) and retries a 429 with backoff (`JINA_MAX_RETRIES`) rather than failing outright - if you're still seeing 429s under real usage, either is safe to raise, or upgrade the Jina key tier (50 concurrent on paid)
+- Embeddings deliberately have NO cross-provider fallback (unlike generation, which falls back across models and even providers). A second embedding provider isn't a drop-in swap the way a second chat model is: two providers' embeddings live in different vector spaces, so a document indexed with one provider can't be searched correctly by a query embedded with another, even at the same output dimension (this bit the project once already, in the Gemini→Jina migration below) - a genuine dual-provider setup would mean indexing every document with both providers into separate namespaces and picking one consistently for a given search, not just retrying the query embedding on a different API
 - This project originally used Gemini for both embeddings and generation; it now uses Jina AI for embeddings and Groq for generation, after Gemini's newly-issued API keys started hitting a Google-side authentication rollout issue. If you have documents ingested under the old Gemini setup, **re-upload them** — Jina's embeddings live in a different vector space than Gemini's, so old vectors in Pinecone won't retrieve correctly against new Jina-embedded queries even though both happen to use 768 dimensions.
 
 ## Roadmap

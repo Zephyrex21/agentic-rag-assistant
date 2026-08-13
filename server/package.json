@@ -23,6 +23,7 @@
     "test:tracebuilder": "node src/utils/test-tracebuilder.js",
     "test:agenttools": "node src/utils/test-agenttools.js",
     "test:agenticplanner": "node src/utils/test-agenticplanner.js",
+    "test:embeddings": "node src/utils/test-embeddings.js",
     "test:routes": "node --test \"test/*.test.js\"",
     "eval": "node eval/run-eval.js",
     "diagnose:keys": "node src/utils/diagnose-api-keys.js"
