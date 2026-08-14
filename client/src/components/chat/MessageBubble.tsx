@@ -58,7 +58,14 @@ export function MessageBubble({ message }: { message: Message }) {
             </motion.div>
           ) : showRevising ? (
             <motion.div key="revising" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <RevisingIndicator />
+              {message.previousContent && (
+                <div className="pointer-events-none opacity-40 select-none">
+                  <AnswerText content={message.previousContent} sources={message.sources} />
+                </div>
+              )}
+              <div className={message.previousContent ? 'mt-3' : undefined}>
+                <RevisingIndicator />
+              </div>
             </motion.div>
           ) : (
             <motion.div key="content" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>

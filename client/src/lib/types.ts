@@ -125,6 +125,10 @@ export interface Message {
   isStreaming?: boolean;
   phase?: 'searching' | 'streaming' | 'revising';
   revisionIssue?: string;
+  // The answer as it stood right before a revision started - kept around
+  // only during the 'revising' phase so the UI can show it dimmed instead
+  // of the whole answer abruptly vanishing while the correction streams in.
+  previousContent?: string;
   // Persisted - whether this answer passed self-verification, and whether
   // it took a revision pass to get there. `verified` is undefined when
   // self-verification was disabled/not applicable, not just "unknown."

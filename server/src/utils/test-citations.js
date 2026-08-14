@@ -30,6 +30,21 @@ const cases = [
     answer: 'This is covered too (Source   3).',
     expected: [3],
   },
+  {
+    label: 'Grouped multi-source citation - the regression case (used to extract nothing)',
+    answer: 'This is a broad synthesis point (Source 1, Source 2).',
+    expected: [1, 2],
+  },
+  {
+    label: 'Three-way grouped citation',
+    answer: 'Covers several areas (Source 2, Source 5, Source 6).',
+    expected: [2, 5, 6],
+  },
+  {
+    label: 'Mix of single and grouped citations, with a repeat across them (dedupes)',
+    answer: 'First point (Source 1). Second point (Source 1, Source 3).',
+    expected: [1, 3],
+  },
 ];
 
 console.log('=== Citation Extraction Test ===\n');

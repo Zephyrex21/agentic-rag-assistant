@@ -73,13 +73,20 @@ const NO_INFO_ANSWER =
 
 const EXCERPT_LENGTH = 200;
 
+// Matches a whole citation group - a single "(Source 1)" OR a
+// comma-separated group like "(Source 1, Source 3)", which the generation
+// prompt explicitly asks the model to use when a claim draws on more than
+// one source (see llm.js's rule 3). A single-number-only regex would miss
+// grouped citations entirely, undercounting which sources were actually
+// cited.
 function extractCitedSourceNumbers(answerText) {
   const cited = new Set();
-  const regex = /\(Source\s+(\d+)\)/gi;
-  let match;
+  const groupRegex = /\(Source\s+\d+(?:\s*,\s*Source\s+\d+)*\)/gi;
+  let groupMatch;
   // eslint-disable-next-line no-cond-assign
-  while ((match = regex.exec(answerText)) !== null) {
-    cited.add(parseInt(match[1], 10));
+  while ((groupMatch = groupRegex.exec(answerText)) !== null) {
+    const numbers = groupMatch[0].match(/\d+/g) || [];
+    for (const n of numbers) cited.add(parseInt(n, 10));
   }
   return cited;
 }
@@ -450,10 +457,18 @@ async function* retrieveAndAnswerStream(question, options = {}) {
   let verified = true;
   let wasRevised = false;
   traceRaw.verificationEnabled = ENABLE_SELF_VERIFICATION;
+  // A broad/multi-part question's answer necessarily synthesizes across
+  // many sources in reworded language - a strict per-claim verification
+  // check is more prone to false-positive on that kind of answer than on a
+  // narrow single-fact one, and a false positive here means an unnecessary
+  // (and visibly jarring) revision cycle for an answer that was already
+  // fine. See selfVerification.js's buildVerifyPrompt for how this relaxes
+  // the check, not skips it - a genuinely wrong fact still fails either way.
+  const isBroad = BROAD_QUESTION_RE.test(question);
 
   if (ENABLE_SELF_VERIFICATION) {
     t = Date.now();
-    const check = await verifyAnswer(question, fullAnswer, finalSources);
+    const check = await verifyAnswer(question, fullAnswer, finalSources, { isBroad });
     traceRaw.verificationMs = Date.now() - t;
     traceRaw.verificationIssue = check.issue;
 
@@ -506,7 +521,7 @@ async function* retrieveAndAnswerStream(question, options = {}) {
       // One more check on the revised answer, purely for the `verified`
       // flag shown in the UI - does NOT trigger a second revision loop.
       t = Date.now();
-      const secondCheck = await verifyAnswer(question, fullAnswer, finalSources);
+      const secondCheck = await verifyAnswer(question, fullAnswer, finalSources, { isBroad });
       traceRaw.secondVerificationMs = Date.now() - t;
       verified = secondCheck.passed;
     }

@@ -2,9 +2,26 @@ export type AnswerSegment =
   | { type: 'text'; content: string }
   | { type: 'citation'; sourceNumber: number };
 
+// Custom URL scheme markdown link parsers won't try to "fix" or normalize -
+// deliberately distinct from http(s):// so there's no ambiguity with a real link.
+const CITATION_SCHEME = 'citation:';
+
+// Matches a whole citation group - a single "(Source 1)" OR a
+// comma-separated group like "(Source 1, Source 3)", which the generation
+// prompt explicitly asks the model to use when a claim draws on more than
+// one source (see llm.js's rule 3). A single-number-only regex used to miss
+// grouped citations entirely, leaving them as literal unstyled
+// "(Source 1, Source 2)" text instead of badges - this matches the whole
+// group so every number inside it gets converted.
+const CITATION_GROUP_RE = /\(Source\s+\d+(?:\s*,\s*Source\s+\d+)*\)/gi;
+
+function extractSourceNumbers(citationGroup: string): number[] {
+  return (citationGroup.match(/\d+/g) || []).map((n) => parseInt(n, 10));
+}
+
 /**
  * Splits an answer string into alternating text/citation segments, so the
- * renderer can turn each "(Source N)" into an interactive badge while
+ * renderer can turn each citation group into interactive badges while
  * leaving everything else as plain text.
  *
  * @deprecated for rendering - AnswerText now uses react-markdown with
@@ -14,7 +31,7 @@ export type AnswerSegment =
  */
 export function parseAnswerSegments(answer: string): AnswerSegment[] {
   const segments: AnswerSegment[] = [];
-  const regex = /\(Source\s+(\d+)\)/gi;
+  const regex = CITATION_GROUP_RE;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -22,7 +39,9 @@ export function parseAnswerSegments(answer: string): AnswerSegment[] {
     if (match.index > lastIndex) {
       segments.push({ type: 'text', content: answer.slice(lastIndex, match.index) });
     }
-    segments.push({ type: 'citation', sourceNumber: parseInt(match[1], 10) });
+    for (const num of extractSourceNumbers(match[0])) {
+      segments.push({ type: 'citation', sourceNumber: num });
+    }
     lastIndex = regex.lastIndex;
   }
 
@@ -33,20 +52,21 @@ export function parseAnswerSegments(answer: string): AnswerSegment[] {
   return segments;
 }
 
-// Custom URL scheme markdown link parsers won't try to "fix" or normalize -
-// deliberately distinct from http(s):// so there's no ambiguity with a real link.
-const CITATION_SCHEME = 'citation:';
-
 /**
- * Transforms "(Source 1)" into a markdown link "[1](citation:1)" BEFORE the
- * text is handed to react-markdown. react-markdown parses this as an
- * ordinary link node; we then override the `a` component to detect the
- * citation: scheme and render a CitationBadge instead of a real anchor tag.
- * This is what lets citations coexist with proper markdown rendering
- * (headers, bold, lists) instead of the two approaches conflicting.
+ * Transforms "(Source 1)" - or a grouped "(Source 1, Source 2)" - into one
+ * or more markdown links "[1](citation:1)" BEFORE the text is handed to
+ * react-markdown. react-markdown parses these as ordinary link nodes; we
+ * then override the `a` component to detect the citation: scheme and
+ * render a CitationBadge instead of a real anchor tag. This is what lets
+ * citations coexist with proper markdown rendering (headers, bold, lists,
+ * table cells) instead of the two approaches conflicting.
  */
 export function transformCitationsToLinks(answer: string): string {
-  return answer.replace(/\(Source\s+(\d+)\)/gi, (_match, num) => `[${num}](${CITATION_SCHEME}${num})`);
+  return answer.replace(CITATION_GROUP_RE, (group) =>
+    extractSourceNumbers(group)
+      .map((n) => `[${n}](${CITATION_SCHEME}${n})`)
+      .join(' ')
+  );
 }
 
 export function isCitationHref(href: string | undefined): number | null {

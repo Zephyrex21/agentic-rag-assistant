@@ -85,4 +85,27 @@ describe('MessageBubble', () => {
     );
     expect(screen.getByText(/1 source used/i)).toBeInTheDocument();
   });
+
+  it('shows the previous answer dimmed (not gone) while a revision is in progress', () => {
+    render(
+      <MessageBubble
+        message={makeMessage({
+          isStreaming: true,
+          phase: 'revising',
+          content: '',
+          previousContent: 'This is the original answer being double-checked.',
+        })}
+      />
+    );
+    // The old answer is still visible in the DOM, not wiped - just dimmed via
+    // the opacity-40 wrapper, so the revision doesn't read as the app losing
+    // its own answer.
+    expect(screen.getByText('This is the original answer being double-checked.')).toBeInTheDocument();
+    expect(screen.getByText(/double-checking this answer/i)).toBeInTheDocument();
+  });
+
+  it('shows only the revising indicator, with no dimmed answer, on the very first attempt (no previous content yet)', () => {
+    render(<MessageBubble message={makeMessage({ isStreaming: true, phase: 'revising', content: '', previousContent: undefined })} />);
+    expect(screen.getByText(/double-checking this answer/i)).toBeInTheDocument();
+  });
 });

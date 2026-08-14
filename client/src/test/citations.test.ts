@@ -35,6 +35,12 @@ describe('parseAnswerSegments', () => {
   it('handles an empty string without crashing', () => {
     expect(parseAnswerSegments('')).toEqual([]);
   });
+
+  it('splits a grouped multi-source citation into multiple citation segments', () => {
+    const segments = parseAnswerSegments('This spans several sources (Source 1, Source 3).');
+    const citationNumbers = segments.filter((s) => s.type === 'citation').map((s) => s.sourceNumber);
+    expect(citationNumbers).toEqual([1, 3]);
+  });
 });
 
 describe('transformCitationsToLinks', () => {
@@ -54,6 +60,26 @@ describe('transformCitationsToLinks', () => {
 
   it('is case-insensitive on the word "Source"', () => {
     expect(transformCitationsToLinks('(source 5)')).toBe('[5](citation:5)');
+  });
+
+  it('converts a grouped multi-source citation into multiple badge links - the regression case', () => {
+    // Before this fix, "(Source 1, Source 2)" matched nothing at all (the
+    // old regex only handled a single number) and rendered as ugly literal
+    // parenthetical text instead of citation badges - this is exactly the
+    // shape the generation prompt asks the model to use when a claim draws
+    // on more than one source (llm.js rule 3).
+    const result = transformCitationsToLinks('This is covered broadly (Source 1, Source 2).');
+    expect(result).toBe('This is covered broadly [1](citation:1) [2](citation:2).');
+  });
+
+  it('converts a three-way grouped citation correctly', () => {
+    const result = transformCitationsToLinks('(Source 2, Source 5, Source 6)');
+    expect(result).toBe('[2](citation:2) [5](citation:5) [6](citation:6)');
+  });
+
+  it('handles a mix of single and grouped citations in the same answer', () => {
+    const result = transformCitationsToLinks('First point (Source 1). Second point (Source 2, Source 3).');
+    expect(result).toBe('First point [1](citation:1). Second point [2](citation:2) [3](citation:3).');
   });
 });
 

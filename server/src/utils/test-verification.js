@@ -59,3 +59,34 @@ if (allPassed && promptOk) {
   console.error('\n❌ Some self-verification tests FAILED - see above.');
   process.exit(1);
 }
+
+// --- isBroad leniency ---
+console.log('\n=== Broad-Question Leniency Test ===\n');
+
+const narrowPrompt = buildVerifyPrompt(
+  'What year was Cryptex founded?',
+  'Cryptex was founded in 2024. (Source 1)',
+  [{ filename: 'doc.md', section: 'Overview', fullText: 'Cryptex was founded in 2024.' }],
+  { isBroad: false }
+);
+console.assert(!narrowPrompt.includes('broad, multi-part question'), 'FAIL: a narrow question should NOT get the broad-question leniency note');
+console.log('✅ A narrow question does not get the broad-question leniency note');
+
+const broadPrompt = buildVerifyPrompt(
+  'What is this readme about?',
+  'This is a study platform with several features. (Source 1, Source 2)',
+  [{ filename: 'doc.md', section: 'Overview', fullText: 'StudySage is a study platform.' }],
+  { isBroad: true }
+);
+console.assert(broadPrompt.includes('broad, multi-part question'), 'FAIL: a broad question should get the leniency note');
+console.assert(/synthesize/i.test(broadPrompt), 'FAIL: broad-question note should explicitly frame synthesis as expected, not a problem');
+console.log('✅ A broad question gets the leniency note, framing synthesis/rewording as expected rather than a failure');
+
+// isBroad defaults to false when not passed at all (backward compatible call shape)
+const defaultPrompt = buildVerifyPrompt('What year was Cryptex founded?', 'Cryptex was founded in 2024.', [
+  { filename: 'doc.md', fullText: 'Cryptex was founded in 2024.' },
+]);
+console.assert(!defaultPrompt.includes('broad, multi-part question'), 'FAIL: omitting the options argument entirely should default to isBroad=false');
+console.log('✅ Omitting the options argument defaults to isBroad=false (backward compatible)');
+
+console.log('\n✅ All broad-question leniency tests passed.');

@@ -163,10 +163,24 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
           },
           onRevising: (issue) => {
             // Self-verification found a problem - a corrected answer is
-            // about to stream in as a fresh set of chunks. Clear the
-            // current (flawed) text so the correction rebuilds cleanly
-            // rather than appending onto the answer being replaced.
-            updateStreamingMessage({ content: '', phase: 'revising', revisionIssue: issue });
+            // about to stream in as a fresh set of chunks. Stash the
+            // current text as `previousContent` (MessageBubble shows it
+            // dimmed while revising) rather than just discarding it - the
+            // whole answer visibly vanishing and getting replaced by a
+            // bare loading indicator reads as the app losing its own
+            // answer, not as a quality check in progress.
+            setActiveConversation((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    messages: prev.messages.map((m) =>
+                      m.id === streamingId
+                        ? { ...m, previousContent: m.content, content: '', phase: 'revising', revisionIssue: issue }
+                        : m
+                    ),
+                  }
+                : prev
+            );
           },
           onDone: (result) => {
             updateStreamingMessage({
