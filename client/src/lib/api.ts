@@ -144,16 +144,40 @@ export interface StreamDoneResult {
   queryId?: string;
   answer: string;
   sources: Source[];
-  verified?: boolean;
+  // null = self-verification is enabled but still running in the
+  // background (see onVerified/onRevisionAvailable below) - the answer
+  // itself is already final either way.
+  verified?: boolean | null;
   wasRevised?: boolean;
+  trace?: PipelineTrace | null;
+}
+
+export interface StreamVerifiedResult {
+  messageId?: string;
+  verified: boolean;
+  trace?: PipelineTrace | null;
+}
+
+export interface StreamRevisionAvailableResult {
+  messageId?: string;
+  suggestedAnswer: string;
+  suggestedSources: Source[];
+  suggestedVerified: boolean;
+  issue: string;
   trace?: PipelineTrace | null;
 }
 
 export interface StreamCallbacks {
   onSources?: (sources: Source[]) => void;
   onChunk?: (text: string) => void;
-  onRevising?: (issue: string) => void;
   onDone?: (result: StreamDoneResult) => void;
+  // Background self-verification finished after `onDone` already fired -
+  // the visible answer never changes for either of these, only its
+  // verified flag/trace (onVerified) or a dismissible suggestion
+  // (onRevisionAvailable). See rag.js's retrieveAndAnswerStream for why
+  // this never auto-replaces what's already shown.
+  onVerified?: (result: StreamVerifiedResult) => void;
+  onRevisionAvailable?: (result: StreamRevisionAvailableResult) => void;
   onError?: (message: string) => void;
 }
 
@@ -190,9 +214,10 @@ async function consumeSseStream(res: Response, callbacks: StreamCallbacks) {
         try {
           const data = JSON.parse(dataLine);
           if (eventName === 'sources') callbacks.onSources?.(data.sources);
-          else if (eventName === 'revising') callbacks.onRevising?.(data.issue);
           else if (eventName === 'chunk') callbacks.onChunk?.(data.text);
           else if (eventName === 'done') callbacks.onDone?.(data);
+          else if (eventName === 'verified') callbacks.onVerified?.(data);
+          else if (eventName === 'revision_available') callbacks.onRevisionAvailable?.(data);
           else if (eventName === 'error') callbacks.onError?.(data.message);
         } catch {
           // malformed event - skip it rather than breaking the whole stream
@@ -243,6 +268,26 @@ export function queryStream(
   callbacks: StreamCallbacks
 ): Promise<void> {
   return postStream(`${API_BASE}/api/query`, { question, documentIds }, callbacks);
+}
+
+/**
+ * Accepts a suggested revision (from onRevisionAvailable) as a message's
+ * new, permanent content - the one moment a suggestion actually gets
+ * written anywhere. Only meaningful for conversation-backed messages
+ * (stateless /api/query has nothing to persist against); the caller is
+ * responsible for updating local UI state either way.
+ */
+export async function applyRevision(
+  conversationId: string,
+  messageId: string,
+  revision: { content: string; sources: Source[]; verified: boolean }
+): Promise<Message> {
+  const res = await fetch(`${API_BASE}/api/conversations/${conversationId}/messages/${messageId}/revision`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(revision),
+  });
+  return handleResponse(res);
 }
 
 export type { Message };

@@ -85,3 +85,48 @@ test('POST /api/query - surfaces the "not enough info" case correctly', async (t
   const chunkEvent = events.find((e) => e.event === 'chunk');
   assert.match(chunkEvent.data.text, /don't have enough/);
 });
+
+test('POST /api/query - done arrives with verified:null and is followed by a verified event once the background check passes', async (t) => {
+  t.mock.method(rag, 'retrieveAndAnswerStream', async function* () {
+    yield { type: 'chunk', text: 'The answer.' };
+    yield { type: 'done', answer: 'The answer.', sources: [], verified: null, wasRevised: false, trace: { stages: [] } };
+    yield { type: 'verified', verified: true, trace: { stages: ['verification'] } };
+  });
+
+  const res = await request(app).post('/api/query').send({ question: 'What is this?' });
+  const events = parseSse(res.text);
+
+  const doneEvent = events.find((e) => e.event === 'done');
+  assert.strictEqual(doneEvent.data.verified, null, 'done should carry the pending (null) verified state, not a guessed value');
+  assert.strictEqual(doneEvent.data.answer, 'The answer.', 'the answer at done time is already final');
+
+  const verifiedEvent = events.find((e) => e.event === 'verified');
+  assert.ok(verifiedEvent, 'expected a separate verified event after done');
+  assert.strictEqual(verifiedEvent.data.verified, true);
+});
+
+test('POST /api/query - forwards a revision_available event as a suggestion, without altering the already-sent done event', async (t) => {
+  t.mock.method(rag, 'retrieveAndAnswerStream', async function* () {
+    yield { type: 'chunk', text: 'Original answer.' };
+    yield { type: 'done', answer: 'Original answer.', sources: [{ sourceNumber: 1 }], verified: null, wasRevised: false };
+    yield {
+      type: 'revision_available',
+      suggestedAnswer: 'Corrected answer.',
+      suggestedSources: [{ sourceNumber: 1 }, { sourceNumber: 2 }],
+      suggestedVerified: true,
+      issue: 'A number was not supported by the sources.',
+      trace: { stages: [] },
+    };
+  });
+
+  const res = await request(app).post('/api/query').send({ question: 'What is this?' });
+  const events = parseSse(res.text);
+
+  const doneEvent = events.find((e) => e.event === 'done');
+  assert.strictEqual(doneEvent.data.answer, 'Original answer.', 'the original answer must stay exactly as sent - never mutated by a later suggestion');
+
+  const revisionEvent = events.find((e) => e.event === 'revision_available');
+  assert.ok(revisionEvent, 'expected a revision_available event');
+  assert.strictEqual(revisionEvent.data.suggestedAnswer, 'Corrected answer.');
+  assert.strictEqual(revisionEvent.data.issue, 'A number was not supported by the sources.');
+});

@@ -39,47 +39,58 @@ router.post('/', async (req, res) => {
   });
 
   try {
-    let finalAnswer = '';
-    let finalSources = [];
-    let verified = true;
-    let wasRevised = false;
-    let trace = null;
+    const queryId = randomUUID();
 
     for await (const event of rag.retrieveAndAnswerStream(question, { documentIds })) {
       if (clientDisconnected) break;
 
       if (event.type === 'sources') {
         writeSseEvent(res, 'sources', { sources: event.sources });
-      } else if (event.type === 'revising') {
-        // Self-verification found a problem with the first draft - a
-        // corrected answer is about to stream in as a fresh set of chunks.
-        writeSseEvent(res, 'revising', { issue: event.issue });
       } else if (event.type === 'chunk') {
         writeSseEvent(res, 'chunk', { text: event.text });
       } else if (event.type === 'no_info') {
-        finalAnswer = event.answer;
-        trace = event.trace ?? null;
         writeSseEvent(res, 'chunk', { text: event.answer });
+        writeSseEvent(res, 'done', {
+          answer: event.answer,
+          sources: [],
+          verified: true,
+          wasRevised: false,
+          trace: event.trace ?? null,
+          queryId,
+        });
       } else if (event.type === 'done') {
-        finalAnswer = event.answer;
-        finalSources = event.sources;
-        verified = event.verified ?? true;
-        wasRevised = event.wasRevised ?? false;
-        trace = event.trace ?? null;
+        // The first answer is final right now - send it immediately rather
+        // than waiting on the background verification steps below, which
+        // may still be in flight on this same connection.
+        writeSseEvent(res, 'done', {
+          answer: event.answer,
+          sources: event.sources,
+          verified: event.verified,
+          wasRevised: false,
+          trace: event.trace ?? null,
+          queryId,
+        });
+      } else if (event.type === 'verified') {
+        // Background verification passed - nothing about the visible
+        // answer changes, just the verified flag/trace.
+        writeSseEvent(res, 'verified', { verified: event.verified, trace: event.trace ?? null });
+      } else if (event.type === 'revision_available') {
+        // Background verification found a problem and generated a
+        // corrected answer - offered as a suggestion, never applied
+        // automatically. No conversation to persist it against here
+        // (this is the stateless endpoint), so the client holds it
+        // in-memory only.
+        writeSseEvent(res, 'revision_available', {
+          suggestedAnswer: event.suggestedAnswer,
+          suggestedSources: event.suggestedSources,
+          suggestedVerified: event.suggestedVerified,
+          issue: event.issue,
+          trace: event.trace ?? null,
+        });
       }
     }
 
-    if (clientDisconnected) return;
-
-    writeSseEvent(res, 'done', {
-      answer: finalAnswer,
-      sources: finalSources,
-      verified,
-      wasRevised,
-      trace,
-      queryId: randomUUID(),
-    });
-    res.end();
+    if (!clientDisconnected) res.end();
   } catch (err) {
     console.error('[query] stream failed:', err.message);
     if (!clientDisconnected) {

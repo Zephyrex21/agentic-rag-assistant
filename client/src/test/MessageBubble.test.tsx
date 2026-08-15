@@ -1,7 +1,19 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MessageBubble } from '../components/chat/MessageBubble';
 import type { Message } from '../lib/types';
+
+const acceptRevision = vi.fn();
+const dismissRevision = vi.fn();
+
+// MessageBubble reads acceptRevision/dismissRevision from context - mocked
+// directly rather than wrapping every test in a real ConversationsProvider,
+// which would fire a real fetch() on mount. Same "swap the boundary for a
+// controllable fake" approach used elsewhere (mermaid, route test mocks).
+vi.mock('../context/ConversationsContext', () => ({
+  useConversations: () => ({ acceptRevision, dismissRevision }),
+}));
 
 function makeMessage(overrides: Partial<Message> = {}): Message {
   return {
@@ -85,27 +97,64 @@ describe('MessageBubble', () => {
     );
     expect(screen.getByText(/1 source used/i)).toBeInTheDocument();
   });
+});
 
-  it('shows the previous answer dimmed (not gone) while a revision is in progress', () => {
-    render(
-      <MessageBubble
-        message={makeMessage({
-          isStreaming: true,
-          phase: 'revising',
-          content: '',
-          previousContent: 'This is the original answer being double-checked.',
-        })}
-      />
-    );
-    // The old answer is still visible in the DOM, not wiped - just dimmed via
-    // the opacity-40 wrapper, so the revision doesn't read as the app losing
-    // its own answer.
-    expect(screen.getByText('This is the original answer being double-checked.')).toBeInTheDocument();
-    expect(screen.getByText(/double-checking this answer/i)).toBeInTheDocument();
+describe('MessageBubble - revision suggestions', () => {
+  const pendingRevision = {
+    answer: 'This is the corrected answer. (Source 1)',
+    sources: [
+      {
+        sourceNumber: 1,
+        cited: true,
+        documentId: 'd1',
+        filename: 'readme.md',
+        chunkIndex: 0,
+        excerpt: '',
+        fullText: '',
+        relevanceScore: 0.9,
+      },
+    ],
+    verified: true,
+    issue: 'A number in the original answer was not supported by the sources.',
+  };
+
+  it('never changes the visible answer just because a revision is pending - the original stays shown', () => {
+    render(<MessageBubble message={makeMessage({ content: 'Original answer text.', pendingRevision })} />);
+    expect(screen.getByText('Original answer text.')).toBeInTheDocument();
+    expect(screen.queryByText(/This is the corrected answer/)).not.toBeInTheDocument();
   });
 
-  it('shows only the revising indicator, with no dimmed answer, on the very first attempt (no previous content yet)', () => {
-    render(<MessageBubble message={makeMessage({ isStreaming: true, phase: 'revising', content: '', previousContent: undefined })} />);
-    expect(screen.getByText(/double-checking this answer/i)).toBeInTheDocument();
+  it('shows a dismissible suggestion pill when a revision is pending', () => {
+    render(<MessageBubble message={makeMessage({ pendingRevision })} />);
+    expect(screen.getByText(/possible improvement/i)).toBeInTheDocument();
+  });
+
+  it('shows no suggestion pill when there is no pending revision', () => {
+    render(<MessageBubble message={makeMessage({ pendingRevision: null })} />);
+    expect(screen.queryByText(/possible improvement/i)).not.toBeInTheDocument();
+  });
+
+  it('opens a modal with the suggested answer and the reason when "Review" is clicked', async () => {
+    const user = userEvent.setup();
+    render(<MessageBubble message={makeMessage({ pendingRevision })} />);
+    await user.click(screen.getByRole('button', { name: /review/i }));
+    expect(screen.getByText('Suggested improvement')).toBeInTheDocument();
+    expect(screen.getByText(/A number in the original answer was not supported/)).toBeInTheDocument();
+  });
+
+  it('calls acceptRevision with the message id when "Use this version" is clicked', async () => {
+    const user = userEvent.setup();
+    render(<MessageBubble message={makeMessage({ id: 'm-target', pendingRevision })} />);
+    await user.click(screen.getByRole('button', { name: /review/i }));
+    await user.click(screen.getByRole('button', { name: /use this version/i }));
+    expect(acceptRevision).toHaveBeenCalledWith('m-target');
+  });
+
+  it("calls dismissRevision with the message id when the pill's dismiss button is clicked, without opening the modal", async () => {
+    const user = userEvent.setup();
+    render(<MessageBubble message={makeMessage({ id: 'm-target', pendingRevision })} />);
+    await user.click(screen.getByRole('button', { name: /dismiss suggestion/i }));
+    expect(dismissRevision).toHaveBeenCalledWith('m-target');
+    expect(screen.queryByText('Suggested improvement')).not.toBeInTheDocument();
   });
 });

@@ -99,64 +99,124 @@ router.post('/:id/messages', async (req, res) => {
 
     await conversationStore.addMessage(conversationId, { role: 'user', content: question });
 
-    let finalAnswer = '';
-    let finalSources = [];
-    let verified = true;
-    let wasRevised = false;
-    let trace = null;
+    let assistantMessage = null;
 
     for await (const event of rag.retrieveAndAnswerStream(question, { documentIds, history })) {
       if (clientDisconnected) break; // stop doing work if nobody's listening anymore
 
       if (event.type === 'sources') {
         writeSseEvent(res, 'sources', { sources: event.sources });
-      } else if (event.type === 'revising') {
-        writeSseEvent(res, 'revising', { issue: event.issue });
       } else if (event.type === 'chunk') {
         writeSseEvent(res, 'chunk', { text: event.text });
       } else if (event.type === 'no_info') {
-        finalAnswer = event.answer;
-        trace = event.trace ?? null;
+        assistantMessage = await conversationStore.addMessage(conversationId, {
+          role: 'assistant',
+          content: event.answer,
+          sources: [],
+          verified: true,
+          wasRevised: false,
+          pipelineTrace: event.trace ?? null,
+        });
         writeSseEvent(res, 'chunk', { text: event.answer });
+        writeSseEvent(res, 'done', {
+          messageId: assistantMessage.id,
+          answer: event.answer,
+          sources: [],
+          verified: true,
+          wasRevised: false,
+          trace: event.trace ?? null,
+        });
       } else if (event.type === 'done') {
-        finalAnswer = event.answer;
-        finalSources = event.sources;
-        verified = event.verified ?? true;
-        wasRevised = event.wasRevised ?? false;
-        trace = event.trace ?? null;
+        // The first answer is final right now - persist and send it
+        // immediately, rather than waiting on the background verification
+        // steps below, which may still be in flight on this connection.
+        assistantMessage = await conversationStore.addMessage(conversationId, {
+          role: 'assistant',
+          content: event.answer,
+          sources: event.sources,
+          verified: event.verified, // null when verification is pending - see rag.js
+          wasRevised: false,
+          pipelineTrace: event.trace ?? null,
+        });
+
+        if (conversation.title === 'New conversation' && conversation.messages.length === 0) {
+          await conversationStore.updateTitle(conversationId, titleFromQuestion(question));
+        }
+
+        writeSseEvent(res, 'done', {
+          messageId: assistantMessage.id,
+          answer: event.answer,
+          sources: event.sources,
+          verified: event.verified,
+          wasRevised: false,
+          trace: event.trace ?? null,
+        });
+      } else if (event.type === 'verified') {
+        // Background verification passed - update the already-persisted
+        // message's verified flag/trace. The visible content never changes.
+        if (assistantMessage) {
+          await conversationStore.updateMessage(assistantMessage.id, { verified: true, pipelineTrace: event.trace ?? null });
+        }
+        writeSseEvent(res, 'verified', {
+          messageId: assistantMessage?.id,
+          verified: event.verified,
+          trace: event.trace ?? null,
+        });
+      } else if (event.type === 'revision_available') {
+        // Background verification found a problem and generated a
+        // corrected answer - offered as a suggestion tied to the
+        // already-persisted message, never applied automatically. Nothing
+        // is written to the DB here; PATCH /:id/messages/:messageId/revision
+        // applies it only if/when the person accepts it.
+        writeSseEvent(res, 'revision_available', {
+          messageId: assistantMessage?.id,
+          suggestedAnswer: event.suggestedAnswer,
+          suggestedSources: event.suggestedSources,
+          suggestedVerified: event.suggestedVerified,
+          issue: event.issue,
+          trace: event.trace ?? null,
+        });
       }
     }
 
-    if (clientDisconnected) return;
-
-    const assistantMessage = await conversationStore.addMessage(conversationId, {
-      role: 'assistant',
-      content: finalAnswer,
-      sources: finalSources,
-      verified,
-      wasRevised,
-      pipelineTrace: trace,
-    });
-
-    if (conversation.title === 'New conversation' && conversation.messages.length === 0) {
-      await conversationStore.updateTitle(conversationId, titleFromQuestion(question));
-    }
-
-    writeSseEvent(res, 'done', {
-      messageId: assistantMessage.id,
-      answer: finalAnswer,
-      sources: finalSources,
-      verified,
-      wasRevised,
-      trace,
-    });
-    res.end();
+    if (!clientDisconnected) res.end();
   } catch (err) {
     console.error('[conversations] message stream failed:', err.message);
     if (!clientDisconnected) {
       writeSseEvent(res, 'error', { message: err.message });
       res.end();
     }
+  }
+});
+
+// PATCH /api/conversations/:id/messages/:messageId/revision - accept a
+// previously-suggested revision (from a `revision_available` SSE event) as
+// the message's new content. The suggested content itself lives only in
+// the client's memory until this point (see rag.js's retrieveAndAnswerStream
+// doc comment on why a revision is never auto-applied) - this is the one
+// moment it's written back.
+router.patch('/:id/messages/:messageId/revision', async (req, res) => {
+  const { content, sources, verified } = req.body || {};
+  if (!content || typeof content !== 'string' || !content.trim()) {
+    return errorResponse(res, 400, 'MISSING_CONTENT', 'Request body must include a non-empty "content" string.');
+  }
+
+  try {
+    const conversation = await conversationStore.getConversation(req.params.id);
+    if (!conversation) return errorResponse(res, 404, 'CONVERSATION_NOT_FOUND', 'No conversation with that ID.');
+
+    const updated = await conversationStore.updateMessage(req.params.messageId, {
+      content,
+      sources: Array.isArray(sources) ? sources : [],
+      verified: verified ?? true,
+      wasRevised: true,
+    });
+    if (!updated) return errorResponse(res, 404, 'MESSAGE_NOT_FOUND', 'No message with that ID.');
+
+    res.json(updated);
+  } catch (err) {
+    console.error('[conversations] apply revision failed:', err.message);
+    errorResponse(res, 500, 'APPLY_REVISION_FAILED', err.message);
   }
 });
 

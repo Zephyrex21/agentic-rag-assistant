@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  applyRevision as apiApplyRevision,
   createConversation as apiCreateConversation,
   deleteConversation as apiDeleteConversation,
   getConversation,
@@ -29,6 +30,12 @@ interface ConversationsContextValue {
   selectConversation: (id: string) => Promise<void>;
   sendMessage: (question: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
+  // Applies a background-verification suggestion (Message.pendingRevision)
+  // as the message's new permanent content - a person's explicit choice,
+  // never automatic. dismissRevision discards the suggestion instead,
+  // leaving the original answer untouched either way.
+  acceptRevision: (messageId: string) => Promise<void>;
+  dismissRevision: (messageId: string) => void;
 }
 
 const ConversationsContext = createContext<ConversationsContextValue | undefined>(undefined);
@@ -130,14 +137,15 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
       const scope = scopeByConversation[activeConversationId];
       const documentIds = scope && scope.length > 0 ? scope : undefined;
 
-      const updateStreamingMessage = (updates: Partial<Message>) => {
+      // Once `done` fires, the server-assigned message ID replaces the
+      // temporary streaming one - later background events (`verified`,
+      // `revision_available`) reference the server ID, so this needs to be
+      // resolved before those arrive, not just captured once at closure time.
+      let resolvedId = streamingId;
+
+      const updateMessage = (id: string, updates: Partial<Message>) => {
         setActiveConversation((prev) =>
-          prev
-            ? {
-                ...prev,
-                messages: prev.messages.map((m) => (m.id === streamingId ? { ...m, ...updates } : m)),
-              }
-            : prev
+          prev ? { ...prev, messages: prev.messages.map((m) => (m.id === id ? { ...m, ...updates } : m)) } : prev
         );
       };
 
@@ -147,7 +155,7 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
             // Sources arriving is the signal that retrieval finished and
             // generation is starting - transition the UI from "searching" to
             // showing the actual streaming text.
-            updateStreamingMessage({ sources, phase: 'streaming' });
+            updateMessage(streamingId, { sources, phase: 'streaming' });
           },
           onChunk: (text) => {
             setActiveConversation((prev) =>
@@ -161,30 +169,14 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
                 : prev
             );
           },
-          onRevising: (issue) => {
-            // Self-verification found a problem - a corrected answer is
-            // about to stream in as a fresh set of chunks. Stash the
-            // current text as `previousContent` (MessageBubble shows it
-            // dimmed while revising) rather than just discarding it - the
-            // whole answer visibly vanishing and getting replaced by a
-            // bare loading indicator reads as the app losing its own
-            // answer, not as a quality check in progress.
-            setActiveConversation((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    messages: prev.messages.map((m) =>
-                      m.id === streamingId
-                        ? { ...m, previousContent: m.content, content: '', phase: 'revising', revisionIssue: issue }
-                        : m
-                    ),
-                  }
-                : prev
-            );
-          },
           onDone: (result) => {
-            updateStreamingMessage({
-              id: result.messageId || streamingId,
+            // The answer is final right now - self-verification (if
+            // enabled) continues in the background AFTER this and can only
+            // ever attach a badge or a dismissible suggestion later, never
+            // change what's already showing here.
+            resolvedId = result.messageId || streamingId;
+            updateMessage(streamingId, {
+              id: resolvedId,
               content: result.answer,
               sources: result.sources,
               verified: result.verified,
@@ -193,6 +185,20 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
               isStreaming: false,
             });
             refreshList();
+          },
+          onVerified: (result) => {
+            updateMessage(result.messageId || resolvedId, { verified: result.verified, pipelineTrace: result.trace });
+          },
+          onRevisionAvailable: (result) => {
+            updateMessage(result.messageId || resolvedId, {
+              pendingRevision: {
+                answer: result.suggestedAnswer,
+                sources: result.suggestedSources,
+                verified: result.suggestedVerified,
+                issue: result.issue,
+              },
+              pipelineTrace: result.trace,
+            });
           },
           onError: (message) => {
             setSendError(message);
@@ -217,6 +223,58 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
       }
     },
     [activeConversationId, refreshList, scopeByConversation]
+  );
+
+  const dismissRevision = useCallback((messageId: string) => {
+    setActiveConversation((prev) =>
+      prev
+        ? { ...prev, messages: prev.messages.map((m) => (m.id === messageId ? { ...m, pendingRevision: null } : m)) }
+        : prev
+    );
+  }, []);
+
+  const acceptRevision = useCallback(
+    async (messageId: string) => {
+      if (!activeConversationId) return;
+      const message = activeConversation?.messages.find((m) => m.id === messageId);
+      const revision = message?.pendingRevision;
+      if (!revision) return;
+
+      // Applied optimistically (feels instant) - if the persistence call
+      // below fails, the local swap still stands for this session; worst
+      // case a later reload shows the original answer again, which is a
+      // safe fallback, not a broken state.
+      setActiveConversation((prev) =>
+        prev
+          ? {
+              ...prev,
+              messages: prev.messages.map((m) =>
+                m.id === messageId
+                  ? {
+                      ...m,
+                      content: revision.answer,
+                      sources: revision.sources,
+                      verified: revision.verified,
+                      wasRevised: true,
+                      pendingRevision: null,
+                    }
+                  : m
+              ),
+            }
+          : prev
+      );
+
+      try {
+        await apiApplyRevision(activeConversationId, messageId, {
+          content: revision.answer,
+          sources: revision.sources,
+          verified: revision.verified,
+        });
+      } catch {
+        // Non-fatal - see comment above.
+      }
+    },
+    [activeConversationId, activeConversation]
   );
 
   const deleteConversation = useCallback(
@@ -257,6 +315,8 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
         selectConversation,
         sendMessage,
         deleteConversation,
+        acceptRevision,
+        dismissRevision,
       }}
     >
       {children}

@@ -7,7 +7,7 @@ const { expandQuery } = require('./queryExpansion');
 const { dedupeChunks } = require('./dedup');
 const { rerank } = require('./reranker');
 const { verifyAnswer } = require('./selfVerification');
-const { generateAnswerStream } = require('./llm');
+const { generateAnswerStream, generateAnswer } = require('./llm');
 const { buildTrace, buildAgenticTrace } = require('./traceBuilder');
 
 const TOP_K = parseInt(process.env.RETRIEVAL_TOP_K || '5', 10);
@@ -373,11 +373,26 @@ function buildSources(finalChunks, listsUsed, citedNumbers) {
  * to generation. Only the generation step streams. Yields events for a
  * route handler to forward as SSE:
  *   { type: 'sources', sources }  - as soon as retrieval completes (cited flags not yet known)
- *   { type: 'chunk', text }       - repeated, as the answer streams in (fired again
- *                                    for a revision pass, if one happens)
- *   { type: 'revising', issue }   - self-verification found a problem; a corrected
- *                                    answer is about to stream in, replacing this one
- *   { type: 'done', answer, sources, verified, wasRevised, trace } - final state
+ *   { type: 'chunk', text }       - repeated, as the FIRST answer streams in
+ *   { type: 'done', answer, sources, verified, wasRevised, trace }
+ *       - the first answer is complete and FINAL as far as the person reading
+ *         it is concerned - a route handler should treat this as the point to
+ *         persist/display it. `verified` is `null` here specifically when
+ *         self-verification is enabled but hasn't run yet - see below.
+ *   { type: 'verified', trace }
+ *       - self-verification finished in the background and the original
+ *         answer held up. Nothing about the visible answer changes; this
+ *         only updates the trace and flips `verified` to `true`.
+ *   { type: 'revision_available', suggestedAnswer, suggestedSources, issue, trace }
+ *       - self-verification found a problem and a corrected answer was
+ *         generated, but it is NOT applied automatically - the original
+ *         answer stays exactly as shown. A route handler surfaces this as
+ *         an opt-in suggestion; a person can accept it (swapping the
+ *         visible answer to the suggested one) or dismiss it and keep what
+ *         they already have. This is a deliberate choice: silently
+ *         rewriting an answer someone has already started reading, out
+ *         from under them, feels like the app changed its mind on them,
+ *         even when the rewrite is a genuine improvement.
  *   { type: 'no_info', trace }    - nothing relevant found, no generation call made
  *
  * RETRIEVAL MODE: when ENABLE_AGENTIC_MODE is on, a tool-calling planner
@@ -390,21 +405,26 @@ function buildSources(finalChunks, listsUsed, citedNumbers) {
  * client would see a confusing partial-then-restarted response), the same
  * constraint documented in llm.js's streaming fallback.
  *
- * SELF-VERIFICATION: runs after a first answer streams in - one cheap
- * batched call checks whether the answer is actually supported by its
- * sources. If not, ONE revision pass runs with the specific critique fed
- * back into the prompt. In agentic mode, that critique also drives a small
- * follow-up search (capped at 2 planner steps) for better source material
- * before regenerating - not just a reworded retry over the same chunks -
- * gated by ENABLE_AGENTIC_RESEARCH_ON_REVISION. Capped at a single revision
- * regardless of outcome either way - this is meant to catch genuine
- * mistakes, not loop indefinitely chasing a perfect score.
+ * SELF-VERIFICATION runs AFTER `done` has already been yielded - it never
+ * blocks or interrupts the visible answer. One cheap batched call checks
+ * whether the answer is actually supported by its sources; if not, ONE
+ * revision is generated (not streamed - it's not shown until/unless
+ * accepted) with the specific critique fed back into the prompt. In
+ * agentic mode, that critique also drives a small follow-up search (capped
+ * at 2 planner steps) for better source material before regenerating - not
+ * just a reworded retry over the same chunks - gated by
+ * ENABLE_AGENTIC_RESEARCH_ON_REVISION. Capped at a single revision
+ * regardless of outcome - this is meant to catch genuine mistakes, not
+ * loop indefinitely chasing a perfect score.
  *
  * `trace` (present when ENABLE_PIPELINE_TRACE is on) is a stage-by-stage
  * record of what the pipeline actually did for this query, built from data
  * already gathered during the run - producing it costs no extra API calls.
- * See traceBuilder.js for the fixed-pipeline shape and agenticRag.js /
- * traceBuilder.js's buildAgenticTrace for the agentic shape.
+ * The trace attached to `done` never includes a verification stage yet
+ * (it hasn't run); the trace attached to the later `verified` or
+ * `revision_available` event is the complete one. See traceBuilder.js for
+ * the fixed-pipeline shape and agenticRag.js / traceBuilder.js's
+ * buildAgenticTrace for the agentic shape.
  */
 async function* retrieveAndAnswerStream(question, options = {}) {
   const streamStart = Date.now();
@@ -441,7 +461,7 @@ async function* retrieveAndAnswerStream(question, options = {}) {
   const preliminarySources = buildSources(chunks, listsUsed, new Set());
   yield { type: 'sources', sources: preliminarySources };
 
-  let workingChunks = chunks;
+  const workingChunks = chunks;
   let fullAnswer = '';
   let t = Date.now();
   for await (const textChunk of generateAnswerStream(question, workingChunks, history)) {
@@ -452,89 +472,121 @@ async function* retrieveAndAnswerStream(question, options = {}) {
   traceRaw.chunksUsedCount = workingChunks.length;
   traceRaw.answerLength = fullAnswer.length;
 
-  let citedNumbers = extractCitedSourceNumbers(fullAnswer);
-  let finalSources = buildSources(workingChunks, listsUsed, citedNumbers);
-  let verified = true;
-  let wasRevised = false;
-  traceRaw.verificationEnabled = ENABLE_SELF_VERIFICATION;
+  const citedNumbers = extractCitedSourceNumbers(fullAnswer);
+  const finalSources = buildSources(workingChunks, listsUsed, citedNumbers);
+
+  // The first answer is DONE as far as the person reading it is concerned -
+  // yielded now, before verification has even started, so nothing about
+  // what they're already reading can change out from under them.
+  // `verified: null` specifically distinguishes "not checked yet" (this
+  // case, when ENABLE_SELF_VERIFICATION is on) from `true`/`false`.
+  const doneTrace = ENABLE_PIPELINE_TRACE
+    ? traceRaw.mode === 'agentic' ? buildAgenticTrace(traceRaw) : buildTrace(traceRaw)
+    : null;
+  yield {
+    type: 'done',
+    answer: fullAnswer,
+    sources: finalSources,
+    verified: ENABLE_SELF_VERIFICATION ? null : true,
+    wasRevised: false,
+    trace: doneTrace,
+  };
+
+  if (!ENABLE_SELF_VERIFICATION) return;
+
+  // Everything from here on runs AFTER `done` - strictly a background
+  // check. Nothing yielded below should ever be interpreted as replacing
+  // what was already shown; see the type-by-type contract in this
+  // function's doc comment above.
+  traceRaw.verificationEnabled = true;
   // A broad/multi-part question's answer necessarily synthesizes across
   // many sources in reworded language - a strict per-claim verification
   // check is more prone to false-positive on that kind of answer than on a
-  // narrow single-fact one, and a false positive here means an unnecessary
-  // (and visibly jarring) revision cycle for an answer that was already
-  // fine. See selfVerification.js's buildVerifyPrompt for how this relaxes
-  // the check, not skips it - a genuinely wrong fact still fails either way.
+  // narrow single-fact one. See selfVerification.js's buildVerifyPrompt for
+  // how this relaxes the check, not skips it - a genuinely wrong fact still
+  // fails either way.
   const isBroad = BROAD_QUESTION_RE.test(question);
 
-  if (ENABLE_SELF_VERIFICATION) {
-    t = Date.now();
-    const check = await verifyAnswer(question, fullAnswer, finalSources, { isBroad });
-    traceRaw.verificationMs = Date.now() - t;
-    traceRaw.verificationIssue = check.issue;
+  t = Date.now();
+  const check = await verifyAnswer(question, fullAnswer, finalSources, { isBroad });
+  traceRaw.verificationMs = Date.now() - t;
+  traceRaw.verificationIssue = check.issue;
 
-    if (!check.passed) {
-      yield { type: 'revising', issue: check.issue };
-
-      // Agentic mode gets one more chance to go find better source
-      // material for the specific thing verification flagged, instead of
-      // only rewording the same chunks - a small, capped follow-up search
-      // rather than a full re-plan.
-      const ENABLE_AGENTIC_RESEARCH_ON_REVISION = process.env.ENABLE_AGENTIC_RESEARCH_ON_REVISION !== 'false';
-      if (ENABLE_AGENTIC_MODE && ENABLE_AGENTIC_RESEARCH_ON_REVISION && traceRaw.mode === 'agentic') {
-        try {
-          const { runAgenticRetrieval } = require('./agenticRag');
-          const researchStart = Date.now();
-          const research = await runAgenticRetrieval(
-            `The previous answer to "${question}" had this problem: ${check.issue}. Search for information that would fix it.`,
-            documentIds,
-            history,
-            { maxSteps: 2 }
-          );
-          traceRaw.researchOnRevisionMs = Date.now() - researchStart;
-          traceRaw.researchOnRevision = true;
-          traceRaw.additionalStepsOnRevision = research.traceRaw?.steps || [];
-          if (research.chunks && research.chunks.length > 0) {
-            const seenIds = new Set(workingChunks.map((c) => c.id));
-            const merged = [...workingChunks, ...research.chunks.filter((c) => !seenIds.has(c.id))];
-            workingChunks = ENABLE_DEDUPLICATION ? dedupeChunks(merged, DEDUP_SIMILARITY_THRESHOLD) : merged;
-          }
-        } catch (err) {
-          console.warn(`[rag] re-search on revision failed (${err.message}), revising with the existing chunks only.`);
-        }
-      }
-
-      let revisedAnswer = '';
-      const revision = { previousAnswer: fullAnswer, issues: check.issue };
-      t = Date.now();
-      for await (const textChunk of generateAnswerStream(question, workingChunks, history, revision)) {
-        revisedAnswer += textChunk;
-        yield { type: 'chunk', text: textChunk };
-      }
-      traceRaw.revisionGenerationMs = Date.now() - t;
-      traceRaw.chunksUsedCount = workingChunks.length;
-
-      fullAnswer = revisedAnswer;
-      citedNumbers = extractCitedSourceNumbers(fullAnswer);
-      finalSources = buildSources(workingChunks, listsUsed, citedNumbers);
-      wasRevised = true;
-
-      // One more check on the revised answer, purely for the `verified`
-      // flag shown in the UI - does NOT trigger a second revision loop.
-      t = Date.now();
-      const secondCheck = await verifyAnswer(question, fullAnswer, finalSources, { isBroad });
-      traceRaw.secondVerificationMs = Date.now() - t;
-      verified = secondCheck.passed;
-    }
-    traceRaw.verificationPassed = verified;
-    traceRaw.wasRevised = wasRevised;
+  if (check.passed) {
+    traceRaw.verificationPassed = true;
+    traceRaw.wasRevised = false;
+    traceRaw.totalMs = Date.now() - streamStart;
+    const trace = ENABLE_PIPELINE_TRACE
+      ? traceRaw.mode === 'agentic' ? buildAgenticTrace(traceRaw) : buildTrace(traceRaw)
+      : null;
+    yield { type: 'verified', verified: true, trace };
+    return;
   }
 
+  // Verification found a problem - generate a corrected answer, but as a
+  // SUGGESTION, not a replacement. Not streamed: it isn't shown live, only
+  // if/when it's accepted, so a single non-streaming call is simpler and
+  // no worse for latency than accumulating a stream server-side would be.
+  let revisedChunks = workingChunks;
+
+  // Agentic mode gets one more chance to go find better source material
+  // for the specific thing verification flagged, instead of only
+  // rewording the same chunks - a small, capped follow-up search rather
+  // than a full re-plan.
+  const ENABLE_AGENTIC_RESEARCH_ON_REVISION = process.env.ENABLE_AGENTIC_RESEARCH_ON_REVISION !== 'false';
+  if (ENABLE_AGENTIC_MODE && ENABLE_AGENTIC_RESEARCH_ON_REVISION && traceRaw.mode === 'agentic') {
+    try {
+      const { runAgenticRetrieval } = require('./agenticRag');
+      const researchStart = Date.now();
+      const research = await runAgenticRetrieval(
+        `The previous answer to "${question}" had this problem: ${check.issue}. Search for information that would fix it.`,
+        documentIds,
+        history,
+        { maxSteps: 2 }
+      );
+      traceRaw.researchOnRevisionMs = Date.now() - researchStart;
+      traceRaw.researchOnRevision = true;
+      traceRaw.additionalStepsOnRevision = research.traceRaw?.steps || [];
+      if (research.chunks && research.chunks.length > 0) {
+        const seenIds = new Set(workingChunks.map((c) => c.id));
+        const merged = [...workingChunks, ...research.chunks.filter((c) => !seenIds.has(c.id))];
+        revisedChunks = ENABLE_DEDUPLICATION ? dedupeChunks(merged, DEDUP_SIMILARITY_THRESHOLD) : merged;
+      }
+    } catch (err) {
+      console.warn(`[rag] re-search on revision failed (${err.message}), revising with the existing chunks only.`);
+    }
+  }
+
+  const revision = { previousAnswer: fullAnswer, issues: check.issue };
+  t = Date.now();
+  const revisedAnswer = await generateAnswer(question, revisedChunks, history, revision);
+  traceRaw.revisionGenerationMs = Date.now() - t;
+
+  const revisedCitedNumbers = extractCitedSourceNumbers(revisedAnswer);
+  const suggestedSources = buildSources(revisedChunks, listsUsed, revisedCitedNumbers);
+
+  // A second check purely so the suggestion itself carries an honest
+  // `verified` flag if accepted - does not trigger a further revision loop.
+  t = Date.now();
+  const secondCheck = await verifyAnswer(question, revisedAnswer, suggestedSources, { isBroad });
+  traceRaw.secondVerificationMs = Date.now() - t;
+
+  traceRaw.verificationPassed = secondCheck.passed;
+  traceRaw.wasRevised = true;
+  traceRaw.chunksUsedCount = revisedChunks.length;
   traceRaw.totalMs = Date.now() - streamStart;
   const trace = ENABLE_PIPELINE_TRACE
     ? traceRaw.mode === 'agentic' ? buildAgenticTrace(traceRaw) : buildTrace(traceRaw)
     : null;
 
-  yield { type: 'done', answer: fullAnswer, sources: finalSources, verified, wasRevised, trace };
+  yield {
+    type: 'revision_available',
+    suggestedAnswer: revisedAnswer,
+    suggestedSources,
+    suggestedVerified: secondCheck.passed,
+    issue: check.issue,
+    trace,
+  };
 }
 
 module.exports = {

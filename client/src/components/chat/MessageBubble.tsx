@@ -1,12 +1,16 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, Sparkles, Search, ShieldCheck, ShieldAlert, RotateCcw } from 'lucide-react';
+import { ChevronDown, Sparkles, Search, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { useState } from 'react';
 import { AnswerText } from '../citations/AnswerText';
 import { CitationBadge } from '../citations/CitationBadge';
+import { RevisionSuggestion } from '../citations/RevisionSuggestion';
 import { PipelineInspectorTrigger } from '../inspector/PipelineInspector';
+import { useConversations } from '../../context/ConversationsContext';
 import type { Message } from '../../lib/types';
 
 export function MessageBubble({ message }: { message: Message }) {
+  const { acceptRevision, dismissRevision } = useConversations();
+
   if (message.role === 'user') {
     return (
       <motion.div
@@ -32,7 +36,6 @@ export function MessageBubble({ message }: { message: Message }) {
   const cited = sources.filter((s) => s.cited);
   const uncited = sources.filter((s) => !s.cited);
   const showSearching = message.isStreaming && message.phase === 'searching';
-  const showRevising = message.isStreaming && message.phase === 'revising';
 
   return (
     <motion.div
@@ -56,27 +59,25 @@ export function MessageBubble({ message }: { message: Message }) {
             <motion.div key="searching" exit={{ opacity: 0 }}>
               <SearchingIndicator />
             </motion.div>
-          ) : showRevising ? (
-            <motion.div key="revising" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              {message.previousContent && (
-                <div className="pointer-events-none opacity-40 select-none">
-                  <AnswerText content={message.previousContent} sources={message.sources} />
-                </div>
-              )}
-              <div className={message.previousContent ? 'mt-3' : undefined}>
-                <RevisingIndicator />
-              </div>
-            </motion.div>
           ) : (
             <motion.div key="content" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
               <AnswerText content={message.content} sources={message.sources} />
               {message.isStreaming && <StreamingCursor />}
               {!message.isStreaming && (
-                <div className="mt-2 flex flex-wrap items-center gap-3">
-                  {sources.length > 0 && <SourcesSummary citedCount={cited.length} uncited={uncited} />}
-                  <VerificationBadge verified={message.verified} wasRevised={message.wasRevised} />
-                  {message.pipelineTrace && <PipelineInspectorTrigger trace={message.pipelineTrace} />}
-                </div>
+                <>
+                  <div className="mt-2 flex flex-wrap items-center gap-3">
+                    {sources.length > 0 && <SourcesSummary citedCount={cited.length} uncited={uncited} />}
+                    <VerificationBadge verified={message.verified} wasRevised={message.wasRevised} />
+                    {message.pipelineTrace && <PipelineInspectorTrigger trace={message.pipelineTrace} />}
+                  </div>
+                  {message.pendingRevision && (
+                    <RevisionSuggestion
+                      revision={message.pendingRevision}
+                      onAccept={() => acceptRevision(message.id)}
+                      onDismiss={() => dismissRevision(message.id)}
+                    />
+                  )}
+                </>
               )}
             </motion.div>
           )}
@@ -105,25 +106,6 @@ function SearchingIndicator() {
   );
 }
 
-function RevisingIndicator() {
-  return (
-    <motion.div
-      className="flex items-center gap-2 text-sm text-highlight"
-      animate={{ opacity: [0.7, 1, 0.7] }}
-      transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
-    >
-      <motion.span
-        animate={{ rotate: 360 }}
-        transition={{ duration: 1.2, repeat: Infinity, ease: 'linear' }}
-        className="flex shrink-0"
-      >
-        <RotateCcw size={13} />
-      </motion.span>
-      <span>Double-checking this answer against the sources...</span>
-    </motion.div>
-  );
-}
-
 function StreamingCursor() {
   return (
     <motion.span
@@ -141,7 +123,7 @@ function StreamingCursor() {
  * it caught its own mistake) or a still-uncertain answer after one
  * revision attempt (honest, not alarmist).
  */
-function VerificationBadge({ verified, wasRevised }: { verified?: boolean; wasRevised?: boolean }) {
+function VerificationBadge({ verified, wasRevised }: { verified?: boolean | null; wasRevised?: boolean }) {
   if (!wasRevised) return null;
 
   if (verified) {

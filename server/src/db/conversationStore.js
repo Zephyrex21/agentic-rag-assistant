@@ -108,6 +108,29 @@ async function updateTitle(conversationId, title) {
   return conversationFromDb(data);
 }
 
+/**
+ * Patches an existing message - used for two background-verification
+ * follow-ups that happen AFTER a message is already persisted (see
+ * rag.js's retrieveAndAnswerStream): flipping `verified` to true once a
+ * background check passes, and applying an accepted revision's content
+ * when a person chooses to use a suggested correction. Only the fields
+ * passed in `updates` are touched. Returns null (not a thrown error) if
+ * the message doesn't exist, so callers can 404 cleanly.
+ */
+async function updateMessage(messageId, updates) {
+  const supabase = getSupabase();
+  const patch = {};
+  if (updates.content !== undefined) patch.content = updates.content;
+  if (updates.sources !== undefined) patch.sources = updates.sources;
+  if (updates.verified !== undefined) patch.verified = updates.verified;
+  if (updates.wasRevised !== undefined) patch.was_revised = updates.wasRevised;
+  if (updates.pipelineTrace !== undefined) patch.pipeline_trace = updates.pipelineTrace;
+
+  const { data, error } = await supabase.from(MESSAGES).update(patch).eq('id', messageId).select().maybeSingle();
+  if (error) throw new Error(`conversationStore.updateMessage failed: ${error.message}`);
+  return messageFromDb(data);
+}
+
 async function deleteConversation(conversationId) {
   const supabase = getSupabase();
   // messages cascade-delete via the FK constraint in schema.sql
@@ -123,5 +146,6 @@ module.exports = {
   getRecentMessages,
   addMessage,
   updateTitle,
+  updateMessage,
   deleteConversation,
 };

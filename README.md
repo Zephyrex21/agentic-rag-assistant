@@ -113,7 +113,7 @@ Both paths share the same retrieval engine (`runRetrieval` in `rag.js`: expand �
 - Near-duplicate chunk removal before reranking (cheap word-overlap check, no extra API calls) — keeps the reranker's limited candidate budget from being spent on repeat passages, which multi-query retrieval makes more likely, and runs again to merge results across multiple agentic search calls
 - Adaptive top-K — broad questions ("summarize", "compare X and Y", "give me an overview") automatically pull more source chunks than narrow factual ones, via a zero-latency keyword heuristic
 - Hybrid search fused with RRF, LLM reranking with a rescue safety net for broad/overview questions
-- Self-verification with a single visible revision pass — answers are checked against their own cited sources after generation. In agentic mode, a failed check also triggers one small follow-up search guided by the specific critique, not just a reworded retry
+- Self-verification runs as a background check, never a blocking one — the first answer is shown as final immediately, and a check afterward either silently confirms it or offers a corrected version as a dismissible suggestion (never an automatic rewrite of something already on screen). In agentic mode, a failed check also triggers one small follow-up search guided by the specific critique, not just a reworded retry
 - Generation prompt tuned for per-claim citation density and cross-source synthesis, not just source-by-source restatement
 - Streaming responses via Server-Sent Events — answers appear token-by-token
 - Cross-family model fallback (generation/utility calls automatically retry on a different model family if the primary is decommissioned - see `modelFallback.js`), plus a separate provider-level fallback (Mistral) if Groq itself is unreachable, not just a single model. Agentic planning failures fall back to the deterministic fixed pipeline automatically, transparent to the person asking
@@ -250,7 +250,8 @@ All configuration lives in `server/.env` (see `.env.example` for the full list w
 | `/api/query` | POST | Stateless Q&A, streamed via SSE |
 | `/api/conversations` | POST/GET | Create or list conversation threads |
 | `/api/conversations/:id` | GET/DELETE | Fetch or delete a thread |
-| `/api/conversations/:id/messages` | POST | Ask a question in a thread, streamed via SSE |
+| `/api/conversations/:id/messages` | POST | Ask a question in a thread, streamed via SSE. The `done` event is the final answer; `verified` and `revision_available` events may follow later on the same connection as self-verification finishes in the background (see Key Features above) |
+| `/api/conversations/:id/messages/:messageId/revision` | PATCH | Accept a suggested revision from a `revision_available` event as the message's new content - the one point a suggestion is actually written anywhere |
 | `/health` | GET | Service status, configured providers, and active pipeline configuration |
 
 ## Testing

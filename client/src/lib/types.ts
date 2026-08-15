@@ -123,17 +123,25 @@ export interface Message {
   // if self-verification caught a problem and a corrected answer is
   // about to replace the current text.
   isStreaming?: boolean;
-  phase?: 'searching' | 'streaming' | 'revising';
-  revisionIssue?: string;
-  // The answer as it stood right before a revision started - kept around
-  // only during the 'revising' phase so the UI can show it dimmed instead
-  // of the whole answer abruptly vanishing while the correction streams in.
-  previousContent?: string;
+  phase?: 'searching' | 'streaming';
   // Persisted - whether this answer passed self-verification, and whether
-  // it took a revision pass to get there. `verified` is undefined when
-  // self-verification was disabled/not applicable, not just "unknown."
-  verified?: boolean;
+  // it took an accepted revision to get there. `null` means verification
+  // is enabled but still running in the background (see pendingRevision
+  // below) - `undefined` means verification was disabled/not applicable.
+  verified?: boolean | null;
   wasRevised?: boolean;
+  // A background self-verification check found a problem and generated a
+  // corrected answer - but it is only ever a SUGGESTION. The visible
+  // `content` never changes on its own; a person has to explicitly accept
+  // it (via useConversations().acceptRevision) for it to become the
+  // message's actual content. Dismissing just clears this without
+  // changing anything.
+  pendingRevision?: {
+    answer: string;
+    sources: Source[];
+    verified: boolean;
+    issue: string;
+  } | null;
   // Persisted - a stage-by-stage record of what the pipeline did to
   // produce this answer. Undefined/null when pipeline tracing was
   // disabled, or for messages created before this feature existed.
