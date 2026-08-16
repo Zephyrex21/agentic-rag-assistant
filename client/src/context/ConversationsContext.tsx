@@ -170,10 +170,13 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
             );
           },
           onDone: (result) => {
-            // The answer is final right now - self-verification (if
-            // enabled) continues in the background AFTER this and can only
-            // ever attach a badge or a dismissible suggestion later, never
-            // change what's already showing here.
+            // The answer is final right now - the person should be free to
+            // send their next message immediately. Self-verification (if
+            // enabled) keeps running in the background on the same
+            // connection AFTER this, and can only attach a badge or a
+            // dismissible suggestion later, never block anything or change
+            // what's already showing here - so sending unblocks HERE, not
+            // when the whole request eventually finishes.
             resolvedId = result.messageId || streamingId;
             updateMessage(streamingId, {
               id: resolvedId,
@@ -185,6 +188,7 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
               isStreaming: false,
             });
             refreshList();
+            setSending(false);
           },
           onVerified: (result) => {
             updateMessage(result.messageId || resolvedId, { verified: result.verified, pipelineTrace: result.trace });
@@ -202,6 +206,7 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
           },
           onError: (message) => {
             setSendError(message);
+            setSending(false);
             // Roll back both the optimistic user message and the streaming
             // placeholder since the round-trip failed.
             setActiveConversation((prev) =>
@@ -213,12 +218,18 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
         });
       } catch (err) {
         setSendError(err instanceof Error ? err.message : 'Something went wrong sending that.');
+        setSending(false);
         setActiveConversation((prev) =>
           prev
             ? { ...prev, messages: prev.messages.filter((m) => m.id !== optimisticUserMessage.id && m.id !== streamingId) }
             : prev
         );
       } finally {
+        // Safety net only - the success/error paths above already clear
+        // `sending` as soon as the person's own answer is ready, well
+        // before this promise resolves (it stays pending in the
+        // background through verification). This just guards against any
+        // path that somehow reaches here without having cleared it yet.
         setSending(false);
       }
     },

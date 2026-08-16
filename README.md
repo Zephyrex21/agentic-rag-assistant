@@ -228,7 +228,8 @@ All configuration lives in `server/.env` (see `.env.example` for the full list w
 | `ENABLE_AGENTIC_MODE` | Use the tool-calling planner instead of the fixed pipeline (default `true`). Falls back to the fixed pipeline automatically for a request if planning itself fails |
 | `AGENTIC_MAX_STEPS` | Max planner round-trips per question (default `3`) - a single round-trip can still request multiple parallel searches |
 | `AGENTIC_PLANNER_MODEL`, `AGENTIC_PLANNER_MODEL_FALLBACK` | Model used for retrieval planning - defaults to `UTILITY_MODEL`, independently overridable |
-| `ENABLE_AGENTIC_RESEARCH_ON_REVISION` | On a self-verification failure in agentic mode, run one small extra search guided by the critique before revising (default `true`) |
+| `ENABLE_AGENTIC_RESEARCH_ON_REVISION` | On a self-verification failure in agentic mode, run one small extra search guided by the critique before revising (default `false` - adds real latency to the background step for a correction a plain reword usually achieves anyway; opt in if you want it) |
+| `BACKGROUND_VERIFICATION_TIMEOUT_MS` | Hard cap on how long the background verification/revision step is allowed to run before being abandoned (default `20000`) - the visible answer is unaffected either way if this fires |
 | `ENABLE_FORMAT_HINTS` | Nudge toward a table/numbered-list/bulleted-list for comparison/steps/enumerable-shaped questions specifically (default `true`) |
 | `QUERY_EXPANSION_COUNT` | How many alternate phrasings to generate for multi-query retrieval (0 disables it) |
 | `DEDUP_SIMILARITY_THRESHOLD` | Word-overlap threshold above which two candidate chunks are treated as near-duplicates |

@@ -56,3 +56,19 @@ console.log(
     ? '\n✅ All adaptive top-K classifications correct.'
     : '\n❌ Some classifications were wrong - see output above.'
 );
+
+// --- Background verification timeout is bounded and configurable ---
+console.log('\n=== Background Verification Timeout Test ===\n');
+process.env.BACKGROUND_VERIFICATION_TIMEOUT_MS = '5000';
+delete require.cache[require.resolve('../services/rag.js')];
+const { BACKGROUND_VERIFICATION_TIMEOUT_MS: customTimeout } = require('../services/rag.js');
+console.assert(customTimeout === 5000, `FAIL: expected BACKGROUND_VERIFICATION_TIMEOUT_MS to read from env, got ${customTimeout}`);
+console.log(`✅ BACKGROUND_VERIFICATION_TIMEOUT_MS is configurable via env (got ${customTimeout})`);
+delete process.env.BACKGROUND_VERIFICATION_TIMEOUT_MS;
+delete require.cache[require.resolve('../services/rag.js')];
+const { BACKGROUND_VERIFICATION_TIMEOUT_MS: defaultTimeout } = require('../services/rag.js');
+console.assert(
+  typeof defaultTimeout === 'number' && defaultTimeout > 0 && defaultTimeout <= 30000,
+  `FAIL: expected a sane default timeout (a few seconds to ~30s), got ${defaultTimeout}`
+);
+console.log(`✅ Default BACKGROUND_VERIFICATION_TIMEOUT_MS is a sane bound (${defaultTimeout}ms) - the background check can never run indefinitely`);

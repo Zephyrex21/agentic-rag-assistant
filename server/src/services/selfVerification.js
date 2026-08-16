@@ -6,7 +6,13 @@ const { withModelFallback, parseGroqError } = require('./modelFallback');
 const MODEL = process.env.UTILITY_MODEL || 'llama-3.1-8b-instant';
 const FALLBACK_MODEL = process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-20b';
 
-const EXCERPT_WORDS_FOR_VERIFY = 150;
+// Deliberately generous - a truncated source is worse than no truncation
+// here: if a chunk's supporting detail for some claim falls past the cut,
+// the verifier sees an incomplete source and wrongly concludes the claim
+// isn't supported, when it actually is. 500 words comfortably covers a
+// full default-sized chunk (CHUNK_SIZE_WORDS=350) with room to spare, and
+// even with several sources this stays well within a cheap model's context.
+const EXCERPT_WORDS_FOR_VERIFY = 500;
 
 function truncateForVerify(text) {
   const words = text.split(/\s+/);
@@ -31,10 +37,10 @@ Sources the answer is supposed to be based on:
 ${sourceList}
 ${broadNote}
 Check the proposed answer against the sources. Two things disqualify it:
-1. A specific factual claim (a number, name, date, or concrete detail) that isn't actually stated in any source, or that contradicts what a source says.
+1. A specific factual claim (a number, name, date, or concrete detail) that isn't actually stated in any source, or that directly contradicts what a source says.
 2. The answer doesn't actually address the question that was asked.
 
-Do NOT flag reasonable summarization, paraphrasing, rewording, or combining information across multiple sources - that's expected and fine even when the wording differs from the sources, and even when the answer covers many points at once. Only flag a genuine unsupported/contradicted factual claim or a non-answer - not a stylistic or coverage difference.
+Do NOT flag: reasonable summarization, paraphrasing, rewording, or combining information across multiple sources (expected and fine, even when the wording differs from the sources); reasonable inferences a person would naturally draw from what the sources describe; minor omissions of detail; or a claim you're only somewhat unsure about. When in doubt, PASS the answer - only fail it if you can point to a specific claim that is clearly, concretely wrong or absent, not a vague sense that something might be off.
 
 Respond with ONLY a JSON object in this exact shape, no other text:
 {"passed": true} or {"passed": false, "issue": "one sentence describing the specific unsupported claim or problem"}

@@ -409,13 +409,17 @@ function buildSources(finalChunks, listsUsed, citedNumbers) {
  * blocks or interrupts the visible answer. One cheap batched call checks
  * whether the answer is actually supported by its sources; if not, ONE
  * revision is generated (not streamed - it's not shown until/unless
- * accepted) with the specific critique fed back into the prompt. In
- * agentic mode, that critique also drives a small follow-up search (capped
- * at 2 planner steps) for better source material before regenerating - not
- * just a reworded retry over the same chunks - gated by
- * ENABLE_AGENTIC_RESEARCH_ON_REVISION. Capped at a single revision
- * regardless of outcome - this is meant to catch genuine mistakes, not
- * loop indefinitely chasing a perfect score.
+ * accepted) with the specific critique fed back into the prompt.
+ * ENABLE_AGENTIC_RESEARCH_ON_REVISION (off by default) can additionally
+ * drive a small follow-up search before regenerating, in agentic mode -
+ * off by default because the extra planner round measurably adds to
+ * latency for a correction a plain reword usually achieves anyway. The
+ * whole background sequence (verify, optionally re-search, regenerate,
+ * re-verify) is capped at BACKGROUND_VERIFICATION_TIMEOUT_MS (default
+ * 20s) - past that it's abandoned rather than left running indefinitely;
+ * the visible answer is entirely unaffected either way. Capped at a
+ * single revision regardless of outcome - this is meant to catch genuine
+ * mistakes, not loop indefinitely chasing a perfect score.
  *
  * `trace` (present when ENABLE_PIPELINE_TRACE is on) is a stage-by-stage
  * record of what the pipeline actually did for this query, built from data
@@ -426,6 +430,121 @@ function buildSources(finalChunks, listsUsed, citedNumbers) {
  * the fixed-pipeline shape and agenticRag.js / traceBuilder.js's
  * buildAgenticTrace for the agentic shape.
  */
+// Caps the WORST CASE latency of the whole background verification +
+// possible revision sequence, regardless of what's actually slow inside it
+// (rate-limit retries, a slow agentic re-search, provider latency spikes,
+// etc.) - past this, the background work is abandoned rather than left to
+// run indefinitely. Nothing breaks when this fires: the answer already
+// shown stays exactly as it is, `verified` just never gets its final
+// true/false update for this message. Far better than a background check
+// silently taking minutes.
+const BACKGROUND_VERIFICATION_TIMEOUT_MS = parseInt(process.env.BACKGROUND_VERIFICATION_TIMEOUT_MS || '20000', 10);
+
+/**
+ * Runs self-verification and, if needed, generates a suggested revision -
+ * everything that happens AFTER `done` has already been yielded. Returns a
+ * single event object ({type: 'verified', ...} or {type: 'revision_available', ...})
+ * or null if verification passed with nothing to report further. Extracted
+ * into its own function (rather than inlined in the generator) specifically
+ * so it can be raced against a timeout with Promise.race in
+ * retrieveAndAnswerStream - a generator's multiple yields can't be raced
+ * against a single timeout the same simple way a single returned promise can.
+ */
+async function runBackgroundVerification({ question, fullAnswer, finalSources, workingChunks, listsUsed, traceRaw, documentIds, history, streamStart }) {
+  traceRaw.verificationEnabled = true;
+  // A broad/multi-part question's answer necessarily synthesizes across
+  // many sources in reworded language - a strict per-claim verification
+  // check is more prone to false-positive on that kind of answer than on a
+  // narrow single-fact one. See selfVerification.js's buildVerifyPrompt for
+  // how this relaxes the check, not skips it - a genuinely wrong fact still
+  // fails either way.
+  const isBroad = BROAD_QUESTION_RE.test(question);
+
+  let t = Date.now();
+  const check = await verifyAnswer(question, fullAnswer, finalSources, { isBroad });
+  traceRaw.verificationMs = Date.now() - t;
+  traceRaw.verificationIssue = check.issue;
+
+  if (check.passed) {
+    traceRaw.verificationPassed = true;
+    traceRaw.wasRevised = false;
+    traceRaw.totalMs = Date.now() - streamStart;
+    const trace = ENABLE_PIPELINE_TRACE
+      ? traceRaw.mode === 'agentic' ? buildAgenticTrace(traceRaw) : buildTrace(traceRaw)
+      : null;
+    return { type: 'verified', verified: true, trace };
+  }
+
+  // Verification found a problem - generate a corrected answer, but as a
+  // SUGGESTION, not a replacement. Not streamed: it isn't shown live, only
+  // if/when it's accepted, so a single non-streaming call is simpler and
+  // no worse for latency than accumulating a stream server-side would be.
+  let revisedChunks = workingChunks;
+
+  // Agentic mode CAN get one more chance to go find better source material
+  // for the specific thing verification flagged, instead of only
+  // rewording the same chunks - off by default (opt in via
+  // ENABLE_AGENTIC_RESEARCH_ON_REVISION) because a full extra planner
+  // round (up to 2 more tool-calling turns, each with its own multi-query
+  // expansion and hybrid search) measurably adds to how long this
+  // background step takes, for a correction that a plain reword usually
+  // achieves anyway.
+  const ENABLE_AGENTIC_RESEARCH_ON_REVISION = process.env.ENABLE_AGENTIC_RESEARCH_ON_REVISION === 'true';
+  if (ENABLE_AGENTIC_MODE && ENABLE_AGENTIC_RESEARCH_ON_REVISION && traceRaw.mode === 'agentic') {
+    try {
+      const { runAgenticRetrieval } = require('./agenticRag');
+      const researchStart = Date.now();
+      const research = await runAgenticRetrieval(
+        `The previous answer to "${question}" had this problem: ${check.issue}. Search for information that would fix it.`,
+        documentIds,
+        history,
+        { maxSteps: 2 }
+      );
+      traceRaw.researchOnRevisionMs = Date.now() - researchStart;
+      traceRaw.researchOnRevision = true;
+      traceRaw.additionalStepsOnRevision = research.traceRaw?.steps || [];
+      if (research.chunks && research.chunks.length > 0) {
+        const seenIds = new Set(workingChunks.map((c) => c.id));
+        const merged = [...workingChunks, ...research.chunks.filter((c) => !seenIds.has(c.id))];
+        revisedChunks = ENABLE_DEDUPLICATION ? dedupeChunks(merged, DEDUP_SIMILARITY_THRESHOLD) : merged;
+      }
+    } catch (err) {
+      console.warn(`[rag] re-search on revision failed (${err.message}), revising with the existing chunks only.`);
+    }
+  }
+
+  const revision = { previousAnswer: fullAnswer, issues: check.issue };
+  t = Date.now();
+  const revisedAnswer = await generateAnswer(question, revisedChunks, history, revision);
+  traceRaw.revisionGenerationMs = Date.now() - t;
+
+  const revisedCitedNumbers = extractCitedSourceNumbers(revisedAnswer);
+  const suggestedSources = buildSources(revisedChunks, listsUsed, revisedCitedNumbers);
+
+  // A second check purely so the suggestion itself carries an honest
+  // `verified` flag if accepted - does not trigger a further revision loop.
+  t = Date.now();
+  const secondCheck = await verifyAnswer(question, revisedAnswer, suggestedSources, { isBroad });
+  traceRaw.secondVerificationMs = Date.now() - t;
+
+  traceRaw.verificationPassed = secondCheck.passed;
+  traceRaw.wasRevised = true;
+  traceRaw.chunksUsedCount = revisedChunks.length;
+  traceRaw.totalMs = Date.now() - streamStart;
+  const trace = ENABLE_PIPELINE_TRACE
+    ? traceRaw.mode === 'agentic' ? buildAgenticTrace(traceRaw) : buildTrace(traceRaw)
+    : null;
+
+  return {
+    type: 'revision_available',
+    suggestedAnswer: revisedAnswer,
+    suggestedSources,
+    suggestedVerified: secondCheck.passed,
+    issue: check.issue,
+    trace,
+  };
+}
+
 async function* retrieveAndAnswerStream(question, options = {}) {
   const streamStart = Date.now();
   const { documentIds, history = [] } = options;
@@ -495,98 +614,20 @@ async function* retrieveAndAnswerStream(question, options = {}) {
   if (!ENABLE_SELF_VERIFICATION) return;
 
   // Everything from here on runs AFTER `done` - strictly a background
-  // check. Nothing yielded below should ever be interpreted as replacing
-  // what was already shown; see the type-by-type contract in this
-  // function's doc comment above.
-  traceRaw.verificationEnabled = true;
-  // A broad/multi-part question's answer necessarily synthesizes across
-  // many sources in reworded language - a strict per-claim verification
-  // check is more prone to false-positive on that kind of answer than on a
-  // narrow single-fact one. See selfVerification.js's buildVerifyPrompt for
-  // how this relaxes the check, not skips it - a genuinely wrong fact still
-  // fails either way.
-  const isBroad = BROAD_QUESTION_RE.test(question);
+  // check, bounded by BACKGROUND_VERIFICATION_TIMEOUT_MS. Nothing yielded
+  // below should ever be interpreted as replacing what was already shown;
+  // see the type-by-type contract in this function's doc comment above.
+  const backgroundResult = await Promise.race([
+    runBackgroundVerification({ question, fullAnswer, finalSources, workingChunks, listsUsed, traceRaw, documentIds, history, streamStart }),
+    new Promise((resolve) => {
+      setTimeout(() => resolve(null), BACKGROUND_VERIFICATION_TIMEOUT_MS);
+    }),
+  ]).catch((err) => {
+    console.warn(`[rag] background verification failed (${err.message}), leaving the original answer as-is.`);
+    return null;
+  });
 
-  t = Date.now();
-  const check = await verifyAnswer(question, fullAnswer, finalSources, { isBroad });
-  traceRaw.verificationMs = Date.now() - t;
-  traceRaw.verificationIssue = check.issue;
-
-  if (check.passed) {
-    traceRaw.verificationPassed = true;
-    traceRaw.wasRevised = false;
-    traceRaw.totalMs = Date.now() - streamStart;
-    const trace = ENABLE_PIPELINE_TRACE
-      ? traceRaw.mode === 'agentic' ? buildAgenticTrace(traceRaw) : buildTrace(traceRaw)
-      : null;
-    yield { type: 'verified', verified: true, trace };
-    return;
-  }
-
-  // Verification found a problem - generate a corrected answer, but as a
-  // SUGGESTION, not a replacement. Not streamed: it isn't shown live, only
-  // if/when it's accepted, so a single non-streaming call is simpler and
-  // no worse for latency than accumulating a stream server-side would be.
-  let revisedChunks = workingChunks;
-
-  // Agentic mode gets one more chance to go find better source material
-  // for the specific thing verification flagged, instead of only
-  // rewording the same chunks - a small, capped follow-up search rather
-  // than a full re-plan.
-  const ENABLE_AGENTIC_RESEARCH_ON_REVISION = process.env.ENABLE_AGENTIC_RESEARCH_ON_REVISION !== 'false';
-  if (ENABLE_AGENTIC_MODE && ENABLE_AGENTIC_RESEARCH_ON_REVISION && traceRaw.mode === 'agentic') {
-    try {
-      const { runAgenticRetrieval } = require('./agenticRag');
-      const researchStart = Date.now();
-      const research = await runAgenticRetrieval(
-        `The previous answer to "${question}" had this problem: ${check.issue}. Search for information that would fix it.`,
-        documentIds,
-        history,
-        { maxSteps: 2 }
-      );
-      traceRaw.researchOnRevisionMs = Date.now() - researchStart;
-      traceRaw.researchOnRevision = true;
-      traceRaw.additionalStepsOnRevision = research.traceRaw?.steps || [];
-      if (research.chunks && research.chunks.length > 0) {
-        const seenIds = new Set(workingChunks.map((c) => c.id));
-        const merged = [...workingChunks, ...research.chunks.filter((c) => !seenIds.has(c.id))];
-        revisedChunks = ENABLE_DEDUPLICATION ? dedupeChunks(merged, DEDUP_SIMILARITY_THRESHOLD) : merged;
-      }
-    } catch (err) {
-      console.warn(`[rag] re-search on revision failed (${err.message}), revising with the existing chunks only.`);
-    }
-  }
-
-  const revision = { previousAnswer: fullAnswer, issues: check.issue };
-  t = Date.now();
-  const revisedAnswer = await generateAnswer(question, revisedChunks, history, revision);
-  traceRaw.revisionGenerationMs = Date.now() - t;
-
-  const revisedCitedNumbers = extractCitedSourceNumbers(revisedAnswer);
-  const suggestedSources = buildSources(revisedChunks, listsUsed, revisedCitedNumbers);
-
-  // A second check purely so the suggestion itself carries an honest
-  // `verified` flag if accepted - does not trigger a further revision loop.
-  t = Date.now();
-  const secondCheck = await verifyAnswer(question, revisedAnswer, suggestedSources, { isBroad });
-  traceRaw.secondVerificationMs = Date.now() - t;
-
-  traceRaw.verificationPassed = secondCheck.passed;
-  traceRaw.wasRevised = true;
-  traceRaw.chunksUsedCount = revisedChunks.length;
-  traceRaw.totalMs = Date.now() - streamStart;
-  const trace = ENABLE_PIPELINE_TRACE
-    ? traceRaw.mode === 'agentic' ? buildAgenticTrace(traceRaw) : buildTrace(traceRaw)
-    : null;
-
-  yield {
-    type: 'revision_available',
-    suggestedAnswer: revisedAnswer,
-    suggestedSources,
-    suggestedVerified: secondCheck.passed,
-    issue: check.issue,
-    trace,
-  };
+  if (backgroundResult) yield backgroundResult;
 }
 
 module.exports = {
@@ -598,4 +639,5 @@ module.exports = {
   runRetrieval,
   buildSources,
   toChunkRef,
+  BACKGROUND_VERIFICATION_TIMEOUT_MS,
 };

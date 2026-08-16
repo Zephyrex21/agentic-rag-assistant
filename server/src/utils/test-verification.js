@@ -49,8 +49,10 @@ const prompt = buildVerifyPrompt(
 );
 console.assert(prompt.includes('Source 1'), 'FAIL: prompt should list numbered sources');
 console.assert(prompt.includes('passed'), 'FAIL: prompt should request the passed/issue JSON shape');
-console.assert(prompt.includes('Do NOT flag reasonable summarization'), 'FAIL: prompt should explicitly allow paraphrasing/summarization');
-const promptOk = prompt.includes('Source 1') && prompt.includes('passed') && prompt.includes('Do NOT flag reasonable summarization');
+console.assert(/reasonable summarization, paraphrasing, rewording/i.test(prompt), 'FAIL: prompt should explicitly allow paraphrasing/summarization');
+console.assert(/when in doubt, pass/i.test(prompt), 'FAIL: prompt should explicitly bias toward passing when uncertain');
+const promptOk =
+  prompt.includes('Source 1') && prompt.includes('passed') && /reasonable summarization, paraphrasing, rewording/i.test(prompt);
 console.log(promptOk ? '✅ Prompt includes sources, JSON shape instruction, and paraphrase-allowance guard' : '❌ FAILED');
 
 if (allPassed && promptOk) {
@@ -90,3 +92,20 @@ console.assert(!defaultPrompt.includes('broad, multi-part question'), 'FAIL: omi
 console.log('✅ Omitting the options argument defaults to isBroad=false (backward compatible)');
 
 console.log('\n✅ All broad-question leniency tests passed.');
+
+// --- Truncation should preserve a full default-sized chunk ---
+// Regression guard: a 150-word cap (the old value) would slice a
+// ~350-word chunk in half, potentially cutting off the exact sentence
+// that supports a claim made later in the chunk - leading the verifier
+// to wrongly flag a perfectly-supported claim as unsupported.
+console.log('\n=== Verify Excerpt Length Test ===\n');
+
+const fullChunkText = Array(340).fill('word').map((w, i) => `${w}${i}`).join(' ') + ' finalcanary';
+const promptWithLongSource = buildVerifyPrompt('What does the source say?', 'An answer. (Source 1)', [
+  { filename: 'doc.md', fullText: fullChunkText },
+]);
+console.assert(
+  promptWithLongSource.includes('finalcanary'),
+  'FAIL: a default-sized chunk (~340 words) should not be truncated before its end in the verify prompt'
+);
+console.log('✅ A default-sized chunk (~340 words) is included in full, not truncated mid-chunk');
