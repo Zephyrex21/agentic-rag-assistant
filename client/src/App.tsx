@@ -6,6 +6,7 @@ import { ConversationsProvider } from './context/ConversationsContext';
 import { Hero } from './components/hero/Hero';
 import { GrainOverlay } from './components/GrainOverlay';
 import { AmbientBackground } from './components/AmbientBackground';
+import { ColdStartNotice } from './components/ColdStartNotice';
 
 // Split out of the initial bundle - see MainAppView.tsx for why. The
 // landing page (Hero, above) stays eager since it's the very first thing
@@ -56,6 +57,7 @@ function App() {
           <ConversationsProvider>
             <AmbientBackground />
             <GrainOverlay />
+            <ColdStartNotice />
             <AppContent />
           </ConversationsProvider>
         </DocumentsProvider>

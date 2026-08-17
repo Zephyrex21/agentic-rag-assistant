@@ -416,6 +416,8 @@ function DocumentRow({
 }
 
 function StatusLine({ doc }: { doc: DocumentSummary }) {
+  const [expanded, setExpanded] = useState(false);
+
   if (doc.status === 'processing') {
     return (
       <p className="flex items-center gap-1 text-[11px] text-ink-muted">
@@ -425,9 +427,19 @@ function StatusLine({ doc }: { doc: DocumentSummary }) {
   }
   if (doc.status === 'failed') {
     return (
-      <p className="flex items-center gap-1 text-[11px] text-highlight" title={doc.error}>
-        <AlertCircle size={10} /> Failed
-      </p>
+      <div>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (doc.error) setExpanded((v) => !v);
+          }}
+          className={`flex items-center gap-1 text-[11px] text-highlight ${doc.error ? 'cursor-pointer hover:underline' : ''}`}
+        >
+          <AlertCircle size={10} /> Failed{doc.error ? ' - tap for details' : ''}
+        </button>
+        {expanded && doc.error && <p className="mt-1 text-[11px] text-ink-muted">{doc.error}</p>}
+      </div>
     );
   }
   return (

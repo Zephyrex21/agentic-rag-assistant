@@ -6,6 +6,29 @@ const { upsertVectors } = require('../services/pinecone');
 const documentStore = require('../db/documentStore');
 const chunkStore = require('../db/chunkStore');
 
+// A large document can produce hundreds of chunks - sending them all as one
+// Jina embeddings request works (their API has no batch size limit), but
+// makes the single request very large and gives the concurrency
+// limiter in embeddings.js nothing to actually parallelize. Splitting into
+// fixed-size sub-batches processed concurrently (bounded by
+// JINA_MAX_CONCURRENCY) is both safer for a big document and faster than
+// one giant sequential call.
+const EMBEDDING_BATCH_SIZE = parseInt(process.env.INGESTION_EMBEDDING_BATCH_SIZE || '50', 10);
+
+function chunkArray(items, size) {
+  const batches = [];
+  for (let i = 0; i < items.length; i += size) {
+    batches.push(items.slice(i, i + size));
+  }
+  return batches;
+}
+
+async function embedChunksInBatches(texts) {
+  const batches = chunkArray(texts, EMBEDDING_BATCH_SIZE);
+  const results = await Promise.all(batches.map((batch) => embedBatch(batch)));
+  return results.flat();
+}
+
 /**
  * Runs the full ingestion pipeline for a single document.
  * Designed to be fired-and-forgotten by the upload route: it updates the
@@ -26,8 +49,8 @@ async function processDocument({ documentId, filePath, filename }) {
       throw new Error('Document produced zero chunks after processing.');
     }
 
-    // 3. Embed all chunks (batched)
-    const vectors = await embedBatch(chunks.map((c) => c.text));
+    // 3. Embed all chunks, in bounded sub-batches rather than one call
+    const vectors = await embedChunksInBatches(chunks.map((c) => c.text));
 
     // 4. Build Pinecone upsert payload with citation metadata
     const pineconeVectors = chunks.map((chunk, i) => ({
@@ -76,4 +99,4 @@ async function processDocument({ documentId, filePath, filename }) {
   }
 }
 
-module.exports = { processDocument };
+module.exports = { processDocument, chunkArray, EMBEDDING_BATCH_SIZE };

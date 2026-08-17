@@ -19,6 +19,12 @@ import type { ConversationDetail, ConversationSummary, Message } from '../lib/ty
 interface ConversationsContextValue {
   conversations: ConversationSummary[];
   conversationsLoading: boolean;
+  // True once the initial load has been pending long enough that it's
+  // probably a Render free-tier cold start (the backend spins down after
+  // inactivity and can take up to ~a minute to wake back up), not just a
+  // normal network delay - see the threshold in the effect below. Meant
+  // for a one-time "hang tight" notice, not a general loading indicator.
+  isColdStarting: boolean;
   activeConversationId: string | null;
   activeConversation: ConversationDetail | null;
   threadLoading: boolean;
@@ -40,6 +46,19 @@ interface ConversationsContextValue {
 
 const ConversationsContext = createContext<ConversationsContextValue | undefined>(undefined);
 
+// How long the initial conversations fetch has to be pending before it's
+// treated as "probably a cold start" rather than just an ordinary slow
+// connection - long enough that a normally-warm backend never crosses it,
+// short enough that someone waiting on an actually-cold one isn't left
+// wondering what's happening for several seconds first. Overridable via
+// env so tests can use a near-instant threshold instead of a real ~2.5s
+// wait - read lazily (not as a module-level const) so it's evaluated when
+// the effect actually runs, after a test's vi.stubEnv call, not at import
+// time (ESM import hoisting would otherwise capture the default too early).
+function getColdStartThresholdMs() {
+  return Number(import.meta.env.VITE_COLD_START_THRESHOLD_MS) || 2500;
+}
+
 function makeId() {
   // Optimistic-message placeholder IDs only - real IDs come from the server
   // and replace these once the request resolves.
@@ -49,6 +68,7 @@ function makeId() {
 export function ConversationsProvider({ children }: { children: ReactNode }) {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
+  const [isColdStarting, setIsColdStarting] = useState(false);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [activeConversation, setActiveConversation] = useState<ConversationDetail | null>(null);
   const [threadLoading, setThreadLoading] = useState(false);
@@ -74,6 +94,19 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     refreshList();
   }, [refreshList]);
+
+  // Only meaningfully runs once: conversationsLoading starts true for the
+  // initial fetch and is never reset back to true afterward (a message
+  // being sent triggers a refreshList() too, but doesn't re-flip this), so
+  // this effect can only ever arm and fire its timer during that first load.
+  useEffect(() => {
+    if (!conversationsLoading) {
+      setIsColdStarting(false);
+      return;
+    }
+    const timer = setTimeout(() => setIsColdStarting(true), getColdStartThresholdMs());
+    return () => clearTimeout(timer);
+  }, [conversationsLoading]);
 
   const selectConversation = useCallback(async (id: string) => {
     setActiveConversationId(id);
@@ -315,6 +348,7 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
       value={{
         conversations,
         conversationsLoading,
+        isColdStarting,
         activeConversationId,
         activeConversation,
         threadLoading,
