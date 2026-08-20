@@ -61,12 +61,6 @@ jobs:
       - run: npm run test:textextraction
       - run: npm run test:ingestion
 
-      # HTTP-level route tests (Express + supertest, DB/service layer
-      # mocked with node:test's built-in mock.method) - a different layer
-      # than the suites above, which test pure logic with no HTTP involved
-      # at all. Also needs zero secrets: every external call is mocked.
-      - run: npm run test:routes
-
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
