@@ -18,7 +18,7 @@ import { useDocuments } from '../../context/DocumentsContext';
 import { DocumentRowSkeleton } from '../ui/Skeleton';
 import type { DocumentSummary, Folder } from '../../lib/types';
 
-const ACCEPTED = '.txt,.md,.pdf';
+const ACCEPTED = '.txt,.md,.pdf,.docx';
 // Below this count, a search box just adds clutter for no real benefit -
 // scanning a handful of filenames by eye is faster than typing.
 const SEARCH_THRESHOLD = 6;
@@ -84,7 +84,7 @@ export function DocumentsPanel() {
         <p className="text-xs text-ink-muted">
           Drop a file or <span className="text-accent">browse</span>
         </p>
-        <p className="font-mono text-[10px] text-ink-muted/70">.txt · .md · .pdf</p>
+        <p className="font-mono text-[10px] text-ink-muted/70">.txt · .md · .pdf · .docx</p>
         <input
           ref={inputRef}
           type="file"

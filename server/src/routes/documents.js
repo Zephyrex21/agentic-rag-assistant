@@ -41,7 +41,7 @@ router.post('/upload', (req, res) => {
   upload.single('file')(req, res, async (err) => {
     if (err) {
       if (err.message === 'UNSUPPORTED_TYPE') {
-        return errorResponse(res, 400, 'UNSUPPORTED_FILE_TYPE', 'Only .txt, .md, and .pdf files are supported.');
+        return errorResponse(res, 400, 'UNSUPPORTED_FILE_TYPE', 'Only .txt, .md, .pdf, and .docx files are supported.');
       }
       if (err.code === 'LIMIT_FILE_SIZE') {
         return errorResponse(res, 400, 'FILE_TOO_LARGE', 'File exceeds the 20MB limit.');

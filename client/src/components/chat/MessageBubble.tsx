@@ -61,7 +61,7 @@ export function MessageBubble({ message }: { message: Message }) {
             </motion.div>
           ) : (
             <motion.div key="content" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-              <AnswerText content={message.content} sources={message.sources} />
+              <AnswerText content={message.content} sources={message.sources} animateCitations={!message.isStreaming} />
               {message.isStreaming && <StreamingCursor />}
               {!message.isStreaming && (
                 <>

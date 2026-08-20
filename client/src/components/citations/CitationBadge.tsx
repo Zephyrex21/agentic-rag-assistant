@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { CitationCard } from './CitationCard';
 import type { Source } from '../../lib/types';
 
-export function CitationBadge({ source }: { source: Source | undefined }) {
+export function CitationBadge({ source, animate = true }: { source: Source | undefined; animate?: boolean }) {
   // If a source number in the text somehow doesn't match a retrieved source
   // (shouldn't happen, but LLM output isn't 100% guaranteed), fail quietly
   // by rendering plain text instead of a broken interactive element.
@@ -15,7 +15,16 @@ export function CitationBadge({ source }: { source: Source | undefined }) {
         <motion.button
           type="button"
           aria-label={`Show source ${source.sourceNumber}: ${source.filename}`}
-          initial={{ opacity: 0, scale: 2, rotate: -22 }}
+          // While an answer is still streaming, react-markdown re-parses the
+          // WHOLE growing text on every chunk, which can cause already-
+          // rendered badges to remount rather than just update - with the
+          // entrance animation always on, that replayed the "stamp" effect
+          // repeatedly as the answer grew, reading as a distracting flicker
+          // instead of a one-time flourish. `initial={false}` skips the
+          // entrance animation entirely (renders straight into its final
+          // state) while streaming; the real stamp-in only plays once, for
+          // the settled final render - see AnswerText/MessageBubble.
+          initial={animate ? { opacity: 0, scale: 2, rotate: -22 } : false}
           animate={{ opacity: 1, scale: 1, rotate: -3 }}
           whileHover={{ rotate: 0, scale: 1.1, y: -1 }}
           whileTap={{ scale: 0.92 }}

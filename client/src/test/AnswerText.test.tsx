@@ -61,4 +61,19 @@ describe('AnswerText', () => {
     expect(screen.getByRole('heading', { name: 'Overview' })).toBeInTheDocument();
     expect(screen.getByText('strong security').tagName).toBe('STRONG');
   });
+
+  it('passes animateCitations through to the citation badge so streaming re-renders can suppress its entrance animation', () => {
+    // Regression test: react-markdown re-parses the whole answer on every
+    // streamed chunk, which could remount already-rendered citation badges
+    // and replay their entrance "stamp" animation repeatedly - reading as a
+    // flicker while an answer is still streaming in. animateCitations=false
+    // (passed while message.isStreaming is true, see MessageBubble) renders
+    // the badge with Framer Motion's initial={false}, which skips the
+    // entrance transition. This just confirms the badge still renders
+    // correctly (and is clickable) with the animation suppressed - the
+    // animation itself isn't something jsdom can meaningfully assert on.
+    const content = 'A claim with a citation. (Source 1)';
+    render(<AnswerText content={content} sources={sources} animateCitations={false} />);
+    expect(screen.getByRole('button', { name: /show source 1/i })).toBeInTheDocument();
+  });
 });

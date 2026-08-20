@@ -20,7 +20,15 @@ function urlTransform(url: string): string {
   return isCitationHref(url) !== null ? url : defaultUrlTransform(url);
 }
 
-export function AnswerText({ content, sources }: { content: string; sources?: Source[] | null }) {
+export function AnswerText({
+  content,
+  sources,
+  animateCitations = true,
+}: {
+  content: string;
+  sources?: Source[] | null;
+  animateCitations?: boolean;
+}) {
   const sourceByNumber = new Map((sources || []).map((s) => [s.sourceNumber, s]));
   const transformed = transformCitationsToLinks(content);
 
@@ -30,7 +38,7 @@ export function AnswerText({ content, sources }: { content: string; sources?: So
     a: ({ href, children }) => {
       const citationNumber = isCitationHref(href);
       if (citationNumber !== null) {
-        return <CitationBadge source={sourceByNumber.get(citationNumber)} />;
+        return <CitationBadge source={sourceByNumber.get(citationNumber)} animate={animateCitations} />;
       }
       return (
         <a href={href} target="_blank" rel="noopener noreferrer" className="text-accent underline underline-offset-2">
