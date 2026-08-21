@@ -21,6 +21,55 @@ import type {
  */
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 
+// --- Access key (APP_ACCESS_KEY on the backend, see server/src/middleware/auth.js) ---
+//
+// Opt-in on the backend: if the server operator never set APP_ACCESS_KEY,
+// every request below sends an empty/absent header and the server simply
+// never checks it - so a local dev setup (or anyone who hasn't set this
+// up) behaves exactly as it did before this existed. Stored in
+// localStorage (not a cookie) specifically so there's nothing for CSRF to
+// exploit - it has to be attached explicitly by this client code, a
+// third-party site can't make the browser send it automatically.
+const ACCESS_KEY_STORAGE_KEY = 'app_access_key';
+
+export function getAccessKey(): string {
+  try {
+    return localStorage.getItem(ACCESS_KEY_STORAGE_KEY) || '';
+  } catch {
+    return ''; // localStorage can throw in some locked-down/private-browsing contexts
+  }
+}
+
+export function setAccessKey(key: string): void {
+  try {
+    if (key) localStorage.setItem(ACCESS_KEY_STORAGE_KEY, key);
+    else localStorage.removeItem(ACCESS_KEY_STORAGE_KEY);
+  } catch {
+    // Non-fatal - the key just won't persist across reloads in this context
+  }
+}
+
+function authHeaders(): Record<string, string> {
+  const key = getAccessKey();
+  return key ? { 'X-App-Access-Key': key } : {};
+}
+
+// Fired whenever a request comes back 401 - a global listener (see
+// AccessKeyGate.tsx) shows a prompt for the key without every individual
+// call site needing to know about this. Deliberately a DOM event, not a
+// React context, so plain fetch-based helpers here (outside any component)
+// can raise it too.
+const ACCESS_REQUIRED_EVENT = 'app-access-required';
+
+function notifyAccessRequired() {
+  window.dispatchEvent(new CustomEvent(ACCESS_REQUIRED_EVENT));
+}
+
+export function onAccessRequired(handler: () => void): () => void {
+  window.addEventListener(ACCESS_REQUIRED_EVENT, handler);
+  return () => window.removeEventListener(ACCESS_REQUIRED_EVENT, handler);
+}
+
 export class ApiError extends Error {
   code: string;
   status: number;
@@ -38,6 +87,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
   const body = isJson ? await res.json() : null;
 
   if (!res.ok) {
+    if (res.status === 401) notifyAccessRequired();
     const message = body?.error?.message || `Request failed with status ${res.status}`;
     const code = body?.error?.code || 'UNKNOWN_ERROR';
     throw new ApiError(message, code, res.status);
@@ -55,24 +105,27 @@ export async function uploadDocument(
   const formData = new FormData();
   formData.append('file', file);
   if (folderId) formData.append('folderId', folderId);
-  const res = await fetch(`${API_BASE}/api/documents/upload`, { method: 'POST', body: formData });
+  // Deliberately no Content-Type header here - the browser sets
+  // multipart/form-data with the correct boundary itself for FormData
+  // bodies; only the access-key header is ours to add.
+  const res = await fetch(`${API_BASE}/api/documents/upload`, { method: 'POST', body: formData, headers: authHeaders() });
   return handleResponse(res);
 }
 
 export async function getDocumentStatus(
   documentId: string
 ): Promise<{ documentId: string; status: string; chunkCount: number; error?: string }> {
-  const res = await fetch(`${API_BASE}/api/documents/${documentId}/status`);
+  const res = await fetch(`${API_BASE}/api/documents/${documentId}/status`, { headers: authHeaders() });
   return handleResponse(res);
 }
 
 export async function listDocuments(): Promise<{ documents: DocumentSummary[] }> {
-  const res = await fetch(`${API_BASE}/api/documents`);
+  const res = await fetch(`${API_BASE}/api/documents`, { headers: authHeaders() });
   return handleResponse(res);
 }
 
 export async function deleteDocument(documentId: string): Promise<{ success: boolean }> {
-  const res = await fetch(`${API_BASE}/api/documents/${documentId}`, { method: 'DELETE' });
+  const res = await fetch(`${API_BASE}/api/documents/${documentId}`, { method: 'DELETE', headers: authHeaders() });
   return handleResponse(res);
 }
 
@@ -82,7 +135,7 @@ export async function moveDocumentToFolder(
 ): Promise<{ id: string; folderId: string | null }> {
   const res = await fetch(`${API_BASE}/api/documents/${documentId}/folder`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ folderId }),
   });
   return handleResponse(res);
@@ -91,43 +144,43 @@ export async function moveDocumentToFolder(
 // ---------- Folders ----------
 
 export async function listFolders(): Promise<{ folders: Folder[] }> {
-  const res = await fetch(`${API_BASE}/api/folders`);
+  const res = await fetch(`${API_BASE}/api/folders`, { headers: authHeaders() });
   return handleResponse(res);
 }
 
 export async function createFolder(name: string): Promise<{ folder: Folder }> {
   const res = await fetch(`${API_BASE}/api/folders`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ name }),
   });
   return handleResponse(res);
 }
 
 export async function deleteFolder(folderId: string): Promise<{ success: boolean }> {
-  const res = await fetch(`${API_BASE}/api/folders/${folderId}`, { method: 'DELETE' });
+  const res = await fetch(`${API_BASE}/api/folders/${folderId}`, { method: 'DELETE', headers: authHeaders() });
   return handleResponse(res);
 }
 
 // ---------- Conversations ----------
 
 export async function createConversation(): Promise<{ conversationId: string; title: string }> {
-  const res = await fetch(`${API_BASE}/api/conversations`, { method: 'POST' });
+  const res = await fetch(`${API_BASE}/api/conversations`, { method: 'POST', headers: authHeaders() });
   return handleResponse(res);
 }
 
 export async function listConversations(): Promise<{ conversations: ConversationSummary[] }> {
-  const res = await fetch(`${API_BASE}/api/conversations`);
+  const res = await fetch(`${API_BASE}/api/conversations`, { headers: authHeaders() });
   return handleResponse(res);
 }
 
 export async function getConversation(conversationId: string): Promise<ConversationDetail> {
-  const res = await fetch(`${API_BASE}/api/conversations/${conversationId}`);
+  const res = await fetch(`${API_BASE}/api/conversations/${conversationId}`, { headers: authHeaders() });
   return handleResponse(res);
 }
 
 export async function deleteConversation(conversationId: string): Promise<{ success: boolean }> {
-  const res = await fetch(`${API_BASE}/api/conversations/${conversationId}`, { method: 'DELETE' });
+  const res = await fetch(`${API_BASE}/api/conversations/${conversationId}`, { method: 'DELETE', headers: authHeaders() });
   return handleResponse(res);
 }
 
@@ -234,7 +287,7 @@ async function postStream(url: string, body: object, callbacks: StreamCallbacks)
   try {
     res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify(body),
     });
   } catch {
@@ -245,6 +298,7 @@ async function postStream(url: string, body: object, callbacks: StreamCallbacks)
   // Validation-type failures (missing question, 404, etc.) arrive as plain
   // JSON before the response ever switches into SSE mode.
   if (!res.ok) {
+    if (res.status === 401) notifyAccessRequired();
     const errBody = await res.json().catch(() => null);
     callbacks.onError?.(errBody?.error?.message || `Request failed with status ${res.status}`);
     return;
@@ -284,7 +338,7 @@ export async function applyRevision(
 ): Promise<Message> {
   const res = await fetch(`${API_BASE}/api/conversations/${conversationId}/messages/${messageId}/revision`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(revision),
   });
   return handleResponse(res);

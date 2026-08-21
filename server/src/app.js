@@ -9,6 +9,8 @@ const queryRouter = require('./routes/query');
 const conversationsRouter = require('./routes/conversations');
 const foldersRouter = require('./routes/folders');
 const { KNOWN_PROBLEMATIC_MODELS } = require('./services/modelFallback');
+const { requireAppAccessKey } = require('./middleware/auth');
+const { generalLimiter, expensiveLimiter } = require('./middleware/rateLimit');
 
 // Uploads still land on local disk temporarily during processing (deleted after
 // ingestion completes). Document/conversation metadata now lives in Supabase
@@ -20,13 +22,41 @@ const app = express();
 
 // ALLOWED_ORIGIN is optional - unset (the default) allows all origins,
 // which is fine for local dev and for a same-origin production deploy
-// (frontend/backend behind one domain). Set it explicitly if the frontend
-// is deployed to a separate domain and you want to lock CORS down to just
-// that origin instead of "*". No auth layer exists in this app (see
-// README's Known Limitations), so this is a defense-in-depth knob, not a
-// substitute for real access control.
-app.use(cors(process.env.ALLOWED_ORIGIN ? { origin: process.env.ALLOWED_ORIGIN } : undefined));
+// (frontend/backend behind one domain). Set it explicitly (comma-separated
+// for more than one) if the frontend is deployed to a separate domain and
+// you want to lock CORS down to just those origins instead of "*". This is
+// defense-in-depth, layered on top of the APP_ACCESS_KEY auth below (see
+// middleware/auth.js) - CORS alone was never real access control even when
+// this was the only knob available, since it only affects browser
+// requests, not direct API calls.
+const allowedOrigins = (process.env.ALLOWED_ORIGIN || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+app.use(cors(allowedOrigins.length > 0 ? { origin: allowedOrigins } : undefined));
+if (allowedOrigins.length === 0 && process.env.NODE_ENV === 'production') {
+  console.warn(
+    '[app] ALLOWED_ORIGIN is not set in a production environment - accepting cross-origin requests from any site. ' +
+      'Set ALLOWED_ORIGIN (comma-separated for multiple origins) to your deployed frontend URL(s).'
+  );
+}
 app.use(express.json());
+
+// Rate limiting - applied to every /api/* route (see middleware/rateLimit.js
+// for why /health is deliberately excluded: it's a cheap, no-side-effect
+// status check hosting platforms and uptime monitors poll frequently, and
+// limiting it buys no real protection). The expensive limiter is layered
+// on top of the general one for the specific routes that spend real
+// Groq/Jina/Pinecone quota per request.
+app.use('/api', generalLimiter);
+
+// APP_ACCESS_KEY is optional - unset (the default) skips this entirely,
+// same opt-in pattern as ALLOWED_ORIGIN above and every pipeline toggle in
+// this codebase. Set it before any public deployment; see
+// middleware/auth.js for the full rationale. Deliberately applied to
+// /api/* only, after express.json() but before the routers - /health stays
+// open so uptime checks and hosting platforms can poll it without a key.
+app.use('/api', requireAppAccessKey);
 
 // Defense in depth: if any route handler ever has an unwrapped async call that
 // throws (like the upload bug this caught during testing), log it loudly instead
@@ -73,9 +103,16 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.use('/api/documents', documentsRouter);
-app.use('/api/query', queryRouter);
-app.use('/api/conversations', conversationsRouter);
+// The expensive limiter sits in front of entire documents/query/conversations
+// routers rather than cherry-picking individual endpoints inside each one -
+// every route in documents.js touches upload/ingestion-adjacent work, and
+// every route in query.js/conversations.js can trigger a full LLM pipeline
+// run, so router-level is both simpler and doesn't risk missing a new route
+// added later. folders.js is plain CRUD against Supabase only, no LLM/embedding
+// calls, so it stays under the general limiter alone.
+app.use('/api/documents', expensiveLimiter, documentsRouter);
+app.use('/api/query', expensiveLimiter, queryRouter);
+app.use('/api/conversations', expensiveLimiter, conversationsRouter);
 app.use('/api/folders', foldersRouter);
 
 // Centralized fallback error handler

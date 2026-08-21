@@ -31,6 +31,7 @@ A full-stack retrieval-augmented generation system where every answer traces bac
 - [Testing](#testing)
 - [Evaluation](#evaluation)
 - [Deployment](#deployment)
+- [Security](#security)
 - [Known Limitations](#known-limitations)
 - [Roadmap](#roadmap)
 - [License](#license)
@@ -349,16 +350,28 @@ Any static host works (Vercel, Netlify, Cloudflare Pages). Using Vercel as the e
 3. **If the frontend and backend end up on separate domains** (the common case with this two-host setup), add one build-time environment variable: `VITE_API_BASE_URL=https://your-backend-url` (from step 2) — without this, the frontend's `/api/...` calls have nowhere to go, since Vite's local dev proxy only exists in development
 4. If instead you're serving both from the same domain (e.g. the backend also serves the built frontend as static files, or your host rewrites `/api/*` to the backend), skip step 3 entirely — the default relative-path behavior already works
 
-### 4. Lock down CORS (optional)
+### 4. Lock down CORS and set an access key (recommended before any public deployment)
 
-By default the backend accepts requests from any origin (fine for local dev and same-domain deploys). If the frontend is on a separate domain, set `ALLOWED_ORIGIN=https://your-frontend-url` in the backend's environment to restrict this. There's no authentication layer in this app either way (see Known Limitations below) — this is a defense-in-depth setting, not access control.
+By default the backend accepts requests from any origin (fine for local dev and same-domain deploys). If the frontend is on a separate domain, set `ALLOWED_ORIGIN=https://your-frontend-url` (comma-separated for more than one) in the backend's environment to restrict this.
+
+Separately, set `APP_ACCESS_KEY` to a long random value in the backend's environment — the frontend will prompt for it once (see `AccessKeyGate.tsx`) and remember it in `localStorage` from then on, sending it back as an `X-App-Access-Key` header on every request. This is deliberately a single shared secret, not a full user/session system, sized to match this project's single-tenant data model (see Known Limitations) — enough to stop a random visitor from burning your free-tier Groq/Jina/Pinecone quota or deleting your documents, not a substitute for real per-user auth if this ever needs multiple distinct users. See `server/src/middleware/auth.js`.
+
+Both are unset by default, matching every other opt-in toggle in this project — local dev and the test suite work unchanged either way.
+
+## Security
+
+A few things worth knowing about the trust model here, beyond CORS/access-key above:
+
+- **Rate limiting** — every `/api/*` route is capped (`RATE_LIMIT_MAX`, default 300 requests/15min per IP), with a tighter cap specifically on the routes that spend real LLM/embedding quota — upload, `/api/query`, and conversation messages (`RATE_LIMIT_EXPENSIVE_MAX`, default 60/15min). See `server/src/middleware/rateLimit.js`. Automatically skipped when `NODE_ENV=test`.
+- **Prompt injection** — uploaded document content flows directly into LLM prompts (generation, reranking, self-verification), so a document containing text that reads like an instruction ("ignore previous instructions...") is a real risk surface. Every prompt that embeds source text explicitly tells the model that content is untrusted data, not instructions, and source excerpts are wrapped in explicit `[BEGIN Source N]...[END Source N]` markers so a document can't fake its way into looking like a new prompt section. This is prompt-level hardening, not a guarantee — treat documents from untrusted people with the same caution you would any other content a model reads on your behalf.
+- **No per-user data isolation** — the single shared `APP_ACCESS_KEY` above controls who can reach the API at all, but every document/conversation is still visible to everyone who has the key (see Known Limitations). Fine for a single person's own deployment; not a multi-tenant access control system.
 
 ## Known Limitations
 
 - Retrieval uses only the current question's embedding — in the fixed pipeline, conversation history informs generation via query rewriting before retrieval but isn't otherwise used to re-rank results; the agentic planner sees history directly and can resolve references itself, but still doesn't re-rank based on it
 - Agentic planning adds one or more extra LLM round-trips before generation starts - typically a few hundred ms to ~1-2s depending on how many searches the planner decides to run, in exchange for the ability to skip or multiply searches as the question actually needs
 - The planner is capped at `AGENTIC_MAX_STEPS` (default 3) round-trips - a question that genuinely needs more than that many distinct searches will proceed with whatever's been gathered so far rather than continuing indefinitely
-- No authentication layer — not required for local/single-user use, would be needed before any public deployment
+- Auth is a single shared access key (`APP_ACCESS_KEY`), not a full user/session system — every document and conversation is visible to anyone with the key, there's no per-user data isolation. Sufficient for a single person's own deployment; a genuine multi-user setup would need a real auth/data model change, not just this key
 - PDF parsing is capped at `PDF_EXTRACTION_TIMEOUT_MS` (default 60s) — a resource-constrained host can take far longer than a well-provisioned machine to parse a large/complex PDF, and a document that exceeds this fails cleanly with a clear message instead of sitting in "processing" forever
 - Extracted text is sanitized for NULL bytes, unpaired UTF-16 surrogates, and other stray control characters before storage — some PDFs' font/ligature encoding produces these, and Postgres text columns reject them outright ("unsupported Unicode escape sequence") if they aren't stripped first
 - Documents uploaded before `migration_002_hybrid_search.sql` need re-uploading to benefit from hybrid search (their chunks predate the keyword-search index)
@@ -368,7 +381,7 @@ By default the backend accepts requests from any origin (fine for local dev and 
 
 ## Roadmap
 
-- Production hardening — rate limiting, auth
+- Real multi-user auth with per-user data isolation — the current `APP_ACCESS_KEY` (see Security above) is a single shared secret, deliberately sized for a single-person deployment, not a genuine multi-tenant system
 - Wider agent tool set — a calculator/math tool for numeric questions over tabular data, or a document-comparison tool that explicitly diffs two sources instead of relying on the generation prompt to synthesize across separately-retrieved chunks
 - Multi-key rotation for the Groq free tier, so a single conversation's planning + generation + verification calls can spread across more than one API key
 
