@@ -28,6 +28,10 @@
     "test:textextraction": "node src/utils/test-textextraction.js",
     "test:ingestion": "node src/utils/test-ingestion.js",
     "test:cancellation": "node src/utils/test-cancellation.js",
+    "test:envconfig": "node src/utils/test-envconfig.js",
+    "test:uploadcleanup": "node src/utils/test-uploadcleanup.js",
+    "test:usagetracker": "node src/utils/test-usagetracker.js",
+    "test:logger": "node src/utils/test-logger.js",
     "test:routes": "node --test \"test/*.test.js\"",
     "eval": "node eval/run-eval.js",
     "diagnose:keys": "node src/utils/diagnose-api-keys.js"

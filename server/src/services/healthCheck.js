@@ -1,12 +1,13 @@
 const { getSupabase } = require('../db/supabaseClient');
 const pinecone = require('./pinecone');
 const { getClient: getGroqClient } = require('./groqClient');
+const { parseIntEnv } = require('../utils/envConfig');
 
 // Deliberately short - this only runs when a person explicitly asks for it
 // (?deep=true), but it should still never let one slow/hanging provider
 // make the health check itself hang. A real outage should report FAST as
 // "not connected", not sit there for the default request timeout.
-const DEEP_CHECK_TIMEOUT_MS = parseInt(process.env.HEALTH_DEEP_CHECK_TIMEOUT_MS || '5000', 10);
+const DEEP_CHECK_TIMEOUT_MS = parseIntEnv('HEALTH_DEEP_CHECK_TIMEOUT_MS', 5000, { min: 100 });
 
 function withTimeout(promise, ms) {
   let timer;

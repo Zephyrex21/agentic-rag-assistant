@@ -1,4 +1,5 @@
 const rateLimit = require('express-rate-limit');
+const { parseIntEnv } = require('../utils/envConfig');
 
 // Skip rate limiting entirely under the test runner - the route test suite
 // (server/test/*.test.js) fires dozens of requests per file against the
@@ -9,17 +10,17 @@ const rateLimit = require('express-rate-limit');
 // kept separate from the CI-run test suite).
 const RATE_LIMITING_ENABLED = process.env.NODE_ENV !== 'test';
 
-const WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10); // 15 minutes
+const WINDOW_MS = parseIntEnv('RATE_LIMIT_WINDOW_MS', 900000, { min: 1000 }); // 15 minutes
 // General ceiling across all /api routes - generous enough that normal
 // interactive use (browsing documents, switching conversations, polling
 // upload status) never comes close, but bounds an outright flood.
-const GENERAL_MAX = parseInt(process.env.RATE_LIMIT_MAX || '300', 10);
+const GENERAL_MAX = parseIntEnv('RATE_LIMIT_MAX', 300, { min: 1 });
 // Tighter ceiling specifically for the routes that cost real money/quota -
 // LLM generation (query/conversation messages, each of which can be
 // several Groq calls deep in agentic mode) and document upload (embedding
 // + Pinecone + Supabase writes). This is the ceiling actually protecting
 // the free-tier Groq/Jina/Pinecone quotas from a single abusive client.
-const EXPENSIVE_MAX = parseInt(process.env.RATE_LIMIT_EXPENSIVE_MAX || '60', 10);
+const EXPENSIVE_MAX = parseIntEnv('RATE_LIMIT_EXPENSIVE_MAX', 60, { min: 1 });
 
 function errorResponse(req, res) {
   res.status(429).json({

@@ -5,6 +5,8 @@
  * necessary). This still defensively handles a couple of possible shapes
  * for `.error` since the SDK types it loosely as `Object | undefined`.
  */
+const usageTracker = require('./usageTracker');
+
 function parseGroqError(err) {
   const status = err?.status ?? null;
   const body = err?.error?.error ?? err?.error ?? null; // handle either nesting
@@ -38,7 +40,9 @@ function isModelUnavailableError(err) {
  */
 async function withModelFallback(primaryModel, fallbackModel, callFn) {
   try {
-    return await callFn(primaryModel);
+    const result = await callFn(primaryModel);
+    usageTracker.recordGroqCall(primaryModel);
+    return result;
   } catch (err) {
     if (fallbackModel && fallbackModel !== primaryModel && isModelUnavailableError(err)) {
       console.warn(
@@ -46,7 +50,9 @@ async function withModelFallback(primaryModel, fallbackModel, callFn) {
           `Consider updating your .env default once you see this.`
       );
       try {
-        return await callFn(fallbackModel);
+        const result = await callFn(fallbackModel);
+        usageTracker.recordGroqCall(fallbackModel);
+        return result;
       } catch (fallbackErr) {
         const { message } = parseGroqError(fallbackErr);
         throw new Error(`Both "${primaryModel}" and fallback "${fallbackModel}" failed: ${message}`);

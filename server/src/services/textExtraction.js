@@ -2,13 +2,14 @@ const fs = require('fs');
 const path = require('path');
 const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
+const { parseIntEnv } = require('../utils/envConfig');
 
 // A resource-constrained host (a free hosting tier, for instance) can take
 // far longer to parse a PDF than a well-provisioned machine would - without
 // a cap, a slow/stuck parse leaves a document sitting in "processing"
 // forever instead of failing cleanly. This bounds the worst case so a
 // document always ends up either ready or failed, never stuck in limbo.
-const PDF_EXTRACTION_TIMEOUT_MS = parseInt(process.env.PDF_EXTRACTION_TIMEOUT_MS || '60000', 10);
+const PDF_EXTRACTION_TIMEOUT_MS = parseIntEnv('PDF_EXTRACTION_TIMEOUT_MS', 60000, { min: 1000 });
 // A scanned/image-only PDF still "parses" successfully (pdf-parse throws no
 // exception) - there's just no real text LAYER underneath the page images
 // for it to extract, only whatever sparse text a cover page, watermark, or
@@ -19,7 +20,7 @@ const PDF_EXTRACTION_TIMEOUT_MS = parseInt(process.env.PDF_EXTRACTION_TIMEOUT_MS
 // doesn't false-positive, high enough that a page that's genuinely just a
 // scanned image (0-10 stray characters from a watermark/header) still gets
 // caught.
-const PDF_MIN_CHARS_PER_PAGE = parseInt(process.env.PDF_MIN_CHARS_PER_PAGE || '25', 10);
+const PDF_MIN_CHARS_PER_PAGE = parseIntEnv('PDF_MIN_CHARS_PER_PAGE', 25, { min: 0 });
 
 function withTimeout(promise, ms, message) {
   let timer;

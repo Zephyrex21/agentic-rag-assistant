@@ -1,7 +1,8 @@
 const path = require('path');
+const { parseIntEnv } = require('../utils/envConfig');
 
-const DEFAULT_CHUNK_SIZE = parseInt(process.env.CHUNK_SIZE_WORDS || '350', 10);
-const DEFAULT_OVERLAP = parseInt(process.env.CHUNK_OVERLAP_WORDS || '50', 10);
+const DEFAULT_CHUNK_SIZE = parseIntEnv('CHUNK_SIZE_WORDS', 350, { min: 10 });
+const DEFAULT_OVERLAP = parseIntEnv('CHUNK_OVERLAP_WORDS', 50, { min: 0 });
 
 // A word ending in ./!/? (optionally followed by a closing quote/paren) is
 // treated as a sentence boundary.

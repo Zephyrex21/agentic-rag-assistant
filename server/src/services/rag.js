@@ -9,20 +9,21 @@ const { rerank } = require('./reranker');
 const { verifyAnswer } = require('./selfVerification');
 const { generateAnswerStream, generateAnswer } = require('./llm');
 const { buildTrace, buildAgenticTrace } = require('./traceBuilder');
+const { parseIntEnv, parseFloatEnv } = require('../utils/envConfig');
 
-const TOP_K = parseInt(process.env.RETRIEVAL_TOP_K || '5', 10);
-const CANDIDATE_POOL = parseInt(process.env.RETRIEVAL_CANDIDATE_POOL || '15', 10);
-const MIN_RELEVANCE_SCORE = parseFloat(process.env.MIN_RELEVANCE_SCORE || '0.35');
+const TOP_K = parseIntEnv('RETRIEVAL_TOP_K', 5, { min: 1 });
+const CANDIDATE_POOL = parseIntEnv('RETRIEVAL_CANDIDATE_POOL', 15, { min: 1 });
+const MIN_RELEVANCE_SCORE = parseFloatEnv('MIN_RELEVANCE_SCORE', 0.35, { min: 0, max: 1 });
 // Lower and deliberately distinct from MIN_RELEVANCE_SCORE above - this only
 // gates the rerank-rejected-everything rescue path (see runRetrieval), not
 // the primary retrieval decision. Kept lenient on purpose: the failure mode
 // being guarded against is a false "I don't know" from an overly strict
 // reranker judgment on a broad question, not weak/irrelevant matches.
-const RERANK_RESCUE_THRESHOLD = parseFloat(process.env.RERANK_RESCUE_THRESHOLD || '0.15');
-const DEDUP_SIMILARITY_THRESHOLD = parseFloat(process.env.DEDUP_SIMILARITY_THRESHOLD || '0.82');
+const RERANK_RESCUE_THRESHOLD = parseFloatEnv('RERANK_RESCUE_THRESHOLD', 0.15, { min: 0, max: 1 });
+const DEDUP_SIMILARITY_THRESHOLD = parseFloatEnv('DEDUP_SIMILARITY_THRESHOLD', 0.82, { min: 0, max: 1 });
 // How many extra chunks a "broad" question (summarize, compare, overview,
 // etc.) gets on top of RETRIEVAL_TOP_K - see computeTopK below.
-const ADAPTIVE_TOPK_BONUS = parseInt(process.env.ADAPTIVE_TOPK_BONUS || '3', 10);
+const ADAPTIVE_TOPK_BONUS = parseIntEnv('ADAPTIVE_TOPK_BONUS', 3, { min: 0 });
 
 // Every stage of the pipeline is independently toggleable, so you can
 // compare quality with/without each one, or turn off a stage if latency or
@@ -53,8 +54,67 @@ const ENABLE_AGENTIC_MODE = process.env.ENABLE_AGENTIC_MODE !== 'false';
 // latency/tokens versus asking a model to classify it. Mirrors the same
 // "broad question" concept the rerank prompt already reasons about in
 // reranker.js - this just also widens how many chunks survive to get there.
-const BROAD_QUESTION_RE =
-  /\b(summarize|summarise|overview|everything|all of|entire|compare|comparison|difference between|list all|each|every|explain (the )?(whole|full)|what does .* cover|tell me about|what is this .*(about|for)|what('?s| is) (this|the) (document|file|readme|repo|project|repository) about)\b/i;
+//
+// English-only by default, which is a real, known gap for anyone asking in
+// another language (see Known Limitations in the README) - a regex simply
+// can't capture every language's way of signaling "this is a broad/summary
+// question" the way English's specific verbs (summarize, compare, overview)
+// do, and getting this wrong risks false-positives on ordinary narrow
+// questions phrased with common words. Rather than guess badly at broader
+// coverage, this includes a SMALL set of common Hindi/Hinglish phrasings
+// (Zephyrex's own primary use case - see memory) as a concrete example of
+// the pattern, plus BROAD_QUESTION_EXTRA_TERMS so anyone can extend this
+// for their own language without touching code: a comma-separated list of
+// additional words/phrases, e.g. `BROAD_QUESTION_EXTRA_TERMS=zusammenfassen,überblick`
+// for German. Each term is escaped before being folded into the regex, so
+// this is safe against regex-injection from a misconfigured env var.
+function escapeRegExp(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildBroadQuestionRegex() {
+  const builtIn = [
+    'summarize',
+    'summarise',
+    'overview',
+    'everything',
+    'all of',
+    'entire',
+    'compare',
+    'comparison',
+    'difference between',
+    'list all',
+    'each',
+    'every',
+    'explain (the )?(whole|full)',
+    'what does .* cover',
+    'tell me about',
+    "what is this .*(about|for)",
+    "what('?s| is) (this|the) (document|file|readme|repo|project|repository) about",
+    // Hindi/Hinglish equivalents (Latin transliteration, since Hinglish
+    // typically writes Hindi words in Latin script) - deliberately just a
+    // few distinctive word ROOTS rather than full conjugated phrases:
+    // Hindi verb suffixes (bataye/batao/karo/kariye...) vary a lot, and a
+    // fixed multi-word phrase ending mid-verb breaks the trailing \b
+    // boundary this regex relies on. A short list of unambiguous roots is
+    // more robust than trying to enumerate every conjugation.
+    'sanshep',
+    'poora overview',
+    'sab kuch bata',
+    'tulna',
+    'antar',
+  ];
+
+  const extra = (process.env.BROAD_QUESTION_EXTRA_TERMS || '')
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .map(escapeRegExp);
+
+  return new RegExp(`\\b(${[...builtIn, ...extra].join('|')})\\b`, 'i');
+}
+
+const BROAD_QUESTION_RE = buildBroadQuestionRegex();
 
 /**
  * Widens TOP_K for questions that read as broad/synthesis-style rather than
@@ -460,7 +520,7 @@ function buildSources(finalChunks, listsUsed, citedNumbers) {
 // shown stays exactly as it is, `verified` just never gets its final
 // true/false update for this message. Far better than a background check
 // silently taking minutes.
-const BACKGROUND_VERIFICATION_TIMEOUT_MS = parseInt(process.env.BACKGROUND_VERIFICATION_TIMEOUT_MS || '20000', 10);
+const BACKGROUND_VERIFICATION_TIMEOUT_MS = parseIntEnv('BACKGROUND_VERIFICATION_TIMEOUT_MS', 20000, { min: 0 });
 
 /**
  * Runs self-verification and, if needed, generates a suggested revision -

@@ -1,5 +1,6 @@
 const { getClient } = require('./groqClient');
 const { withModelFallback } = require('./modelFallback');
+const { parseIntEnv } = require('../utils/envConfig');
 
 // Same lighter/cheaper model as reranking/rewriting/verification - this is
 // a mechanical rephrasing task, not a reasoning task.
@@ -11,7 +12,7 @@ const FALLBACK_MODEL = process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-20b
 // embedding call + one more keyword search (run in parallel, so latency
 // impact is small, but there's no reason to go wide here) for a recall
 // benefit that diminishes fast past 2-3 variants.
-const EXPANSION_COUNT = parseInt(process.env.QUERY_EXPANSION_COUNT || '2', 10);
+const EXPANSION_COUNT = parseIntEnv('QUERY_EXPANSION_COUNT', 2, { min: 0 });
 
 function buildExpansionPrompt(question, count) {
   return `Generate ${count} alternative phrasings of the question below. Each one should use different wording, synonyms, or phrasing style than the original - the goal is to help a search system that matches on BOTH exact keywords and semantic meaning find relevant passages it might miss if it only saw the original phrasing.

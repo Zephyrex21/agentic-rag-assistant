@@ -1,6 +1,9 @@
+const { parseIntEnv } = require('../utils/envConfig');
+const usageTracker = require('./usageTracker');
+
 const JINA_URL = 'https://api.jina.ai/v1/embeddings';
 const MODEL = process.env.EMBEDDING_MODEL || 'jina-embeddings-v3';
-const DIMENSIONS = parseInt(process.env.EMBEDDING_DIMENSIONS || '768', 10);
+const DIMENSIONS = parseIntEnv('EMBEDDING_DIMENSIONS', 768, { min: 1 });
 
 // --- Concurrency limiting -------------------------------------------------
 // Jina's free tier allows only this many SIMULTANEOUS in-flight requests
@@ -16,7 +19,7 @@ const DIMENSIONS = parseInt(process.env.EMBEDDING_DIMENSIONS || '768', 10);
 // trading a little latency for actually working. Global to the process,
 // not per-request, since the whole point is coordinating across
 // concurrent callers.
-const MAX_CONCURRENCY = parseInt(process.env.JINA_MAX_CONCURRENCY || '2', 10);
+const MAX_CONCURRENCY = parseIntEnv('JINA_MAX_CONCURRENCY', 2, { min: 1 });
 let activeRequests = 0;
 const waitQueue = [];
 
@@ -45,8 +48,8 @@ function releaseSlot() {
 // frees up, so it's worth a few attempts before surfacing an error - unlike
 // any OTHER error status, where retrying wouldn't fix anything and should
 // fail immediately instead of wasting time.
-const MAX_RETRIES = parseInt(process.env.JINA_MAX_RETRIES || '3', 10);
-const RETRY_BASE_DELAY_MS = parseInt(process.env.JINA_RETRY_BASE_DELAY_MS || '500', 10);
+const MAX_RETRIES = parseIntEnv('JINA_MAX_RETRIES', 3, { min: 0 });
+const RETRY_BASE_DELAY_MS = parseIntEnv('JINA_RETRY_BASE_DELAY_MS', 500, { min: 0 });
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -122,6 +125,7 @@ async function callJina(texts, task) {
     // Response is OpenAI-embeddings-shaped: { data: [{ embedding, index }, ...] }.
     // Items should already be input-order, but sort by `index` defensively.
     const sorted = [...data.data].sort((a, b) => a.index - b.index);
+    usageTracker.recordJinaCall(texts.length);
     return sorted.map((item) => l2Normalize(item.embedding));
   }
 

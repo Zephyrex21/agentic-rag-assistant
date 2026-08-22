@@ -7,6 +7,7 @@ const { dedupeChunks } = require('./dedup');
 // inside a function body (called well after both modules have finished
 // loading), never at its own top level. See rag.js's retrieveAndAnswerStream.
 const { runRetrieval } = require('./rag');
+const { parseIntEnv, parseFloatEnv } = require('../utils/envConfig');
 
 // Deliberately the lighter/cheaper model by default, same reasoning as
 // queryRewriter.js/reranker.js: deciding whether/how many times to search
@@ -23,14 +24,14 @@ const PLANNER_MODEL_FALLBACK =
 // shouldn't be penalized the same as needing multiple sequential turns to
 // refine a search. Bounds cost/latency either way: worst case is
 // AGENTIC_MAX_STEPS turns, each potentially with a few parallel calls.
-const MAX_STEPS = parseInt(process.env.AGENTIC_MAX_STEPS || '3', 10);
+const MAX_STEPS = parseIntEnv('AGENTIC_MAX_STEPS', 3, { min: 1 });
 
 // Mirrors rag.js's own dedup constants - kept as a small intentional
 // duplication rather than importing rag.js's private module-scope values
 // (which aren't exported), so this module doesn't reach into rag.js's
 // internals beyond the one function it's actually built on (runRetrieval).
 const ENABLE_DEDUPLICATION = process.env.ENABLE_DEDUPLICATION !== 'false';
-const DEDUP_SIMILARITY_THRESHOLD = parseFloat(process.env.DEDUP_SIMILARITY_THRESHOLD || '0.82');
+const DEDUP_SIMILARITY_THRESHOLD = parseFloatEnv('DEDUP_SIMILARITY_THRESHOLD', 0.82, { min: 0, max: 1 });
 
 /**
  * System prompt for the retrieval planner. The critical safety property

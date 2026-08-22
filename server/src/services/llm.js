@@ -1,6 +1,7 @@
 const { getClient } = require('./groqClient');
 const { getClient: getMistralClient } = require('./mistralClient');
 const { withModelFallback, withProviderFallback, parseGroqError } = require('./modelFallback');
+const usageTracker = require('./usageTracker');
 
 // llama-3.3-70b-versatile: current production-tier model on Groq, free-tier
 // eligible, not on the deprecation list as of the most recent notices (see
@@ -235,6 +236,17 @@ async function* generateAnswerStream(question, chunks, history = [], revision = 
 
       if (!yieldedAnything) {
         throw new Error(`"${label}" returned an empty streamed response.`);
+      }
+      // Only counted once the stream is confirmed successful (yielded at
+      // least one real chunk) - an attempt that failed before producing
+      // anything shouldn't be counted as a "call" the way a completed one is.
+      if (label.startsWith('Mistral/')) {
+        // Mistral usage isn't tracked here - usageTracker is scoped to the
+        // two free-tier resources this project actually depends on day to
+        // day (Groq, Jina); Mistral is an emergency last-resort fallback,
+        // not part of the normal cost picture.
+      } else {
+        usageTracker.recordGroqCall(label);
       }
       return; // success - don't fall through to trying the next attempt
     } catch (err) {

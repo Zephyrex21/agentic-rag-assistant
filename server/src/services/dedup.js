@@ -1,10 +1,12 @@
+const { parseFloatEnv } = require('../utils/envConfig');
+
 // Similarity threshold above which two chunks are considered near-duplicates.
 // 0.82 was picked empirically as "high enough that legitimately distinct
 // passages about the same topic don't collide, low enough to catch
 // near-identical text" - see test-dedup.js for the boundary cases this
 // covers (overlapping chunk windows, repeated boilerplate, genuinely
 // distinct passages that merely share vocabulary).
-const DEFAULT_THRESHOLD = parseFloat(process.env.DEDUP_SIMILARITY_THRESHOLD || '0.82');
+const DEFAULT_THRESHOLD = parseFloatEnv('DEDUP_SIMILARITY_THRESHOLD', 0.82, { min: 0, max: 1 });
 
 /**
  * Tokenizes text into a lowercase word set. Punctuation-insensitive and

@@ -8,6 +8,8 @@ const documentsRouter = require('./routes/documents');
 const queryRouter = require('./routes/query');
 const conversationsRouter = require('./routes/conversations');
 const foldersRouter = require('./routes/folders');
+const usageRouter = require('./routes/usage');
+const logger = require('./utils/logger');
 const { KNOWN_PROBLEMATIC_MODELS } = require('./services/modelFallback');
 const healthCheck = require('./services/healthCheck');
 const { requireAppAccessKey } = require('./middleware/auth');
@@ -136,10 +138,16 @@ app.use('/api/documents', expensiveLimiter, documentsRouter);
 app.use('/api/query', expensiveLimiter, queryRouter);
 app.use('/api/conversations', expensiveLimiter, conversationsRouter);
 app.use('/api/folders', foldersRouter);
+app.use('/api/usage', usageRouter);
 
 // Centralized fallback error handler
 app.use((err, req, res, next) => {
-  console.error('[unhandled]', err);
+  logger.error('Unhandled error reached the top-level error handler', {
+    method: req.method,
+    path: req.path,
+    message: err.message,
+    stack: err.stack,
+  });
   res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message || 'Something went wrong.' } });
 });
 

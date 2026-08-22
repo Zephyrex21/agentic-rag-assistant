@@ -22,6 +22,15 @@ const broadQuestions = [
   'What is this readme about?',
   'what is this document about?',
   "What's this repo about?",
+  // Hindi/Hinglish - Zephyrex's own primary use case (see the
+  // regression this whole heuristic exists to catch: "tell me about
+  // this document" failing to retrieve anything for a document-scoped
+  // agentic query - see rag.js's runRetrieval originalQuestion param).
+  'is document ke baare mein sanshep mein bataye',
+  'poora overview de do is project ka',
+  'sab kuch bata do isme',
+  'in dono approaches ka tulna karo',
+  'inka antar bataye',
 ];
 
 const narrowQuestions = [
@@ -56,6 +65,42 @@ console.log(
     ? '\n✅ All adaptive top-K classifications correct.'
     : '\n❌ Some classifications were wrong - see output above.'
 );
+
+// --- BROAD_QUESTION_EXTRA_TERMS: user-extensible for other languages ---
+console.log('\n=== Broad Question Extra Terms (i18n extensibility) Test ===\n');
+// BROAD_QUESTION_EXTRA_TERMS: user-extensible for other languages -
+// deliberately tested with ASCII-only terms. \b (used to bound the whole
+// alternation) is defined against JS regex's ASCII-only \w, so a term
+// that STARTS or ENDS with a non-ASCII letter (e.g. German "überblick")
+// won't get a boundary detected correctly right at that edge - a real,
+// known limitation of this word-boundary approach, not something this
+// test works around by coincidence. ASCII terms (English, Hinglish
+// transliteration, German words that happen to start/end in ASCII
+// letters) are unaffected.
+process.env.BROAD_QUESTION_EXTRA_TERMS = 'zusammenfassen,resumee';
+delete require.cache[require.resolve('../services/rag.js')];
+const { BROAD_QUESTION_RE: extendedRegex } = require('../services/rag.js');
+console.assert(extendedRegex.test('Kannst du das zusammenfassen?') === true, 'FAIL: a user-added ASCII term should be matched');
+console.assert(extendedRegex.test('Gib mir eine resumee') === true, 'FAIL: a user-added ASCII term should be matched');
+console.assert(extendedRegex.test('What year was this founded?') === false, 'FAIL: extending the regex must not affect unrelated narrow questions');
+console.log('✅ BROAD_QUESTION_EXTRA_TERMS lets a user extend broad-question detection for their own language without touching code');
+delete process.env.BROAD_QUESTION_EXTRA_TERMS;
+delete require.cache[require.resolve('../services/rag.js')];
+
+// A regex special character in a user-supplied term must not break/inject
+// into the compiled regex (e.g. an unescaped `(` would throw at require time).
+process.env.BROAD_QUESTION_EXTRA_TERMS = 'test(unsafe)term,another[one]';
+delete require.cache[require.resolve('../services/rag.js')];
+let injectionSafe = true;
+try {
+  require('../services/rag.js');
+} catch {
+  injectionSafe = false;
+}
+console.assert(injectionSafe, 'FAIL: a regex special character in BROAD_QUESTION_EXTRA_TERMS should be escaped, not break the regex compilation');
+console.log('✅ Regex special characters in a user-supplied term are escaped safely, not treated as regex syntax');
+delete process.env.BROAD_QUESTION_EXTRA_TERMS;
+delete require.cache[require.resolve('../services/rag.js')];
 
 // --- Background verification timeout is bounded and configurable ---
 console.log('\n=== Background Verification Timeout Test ===\n');

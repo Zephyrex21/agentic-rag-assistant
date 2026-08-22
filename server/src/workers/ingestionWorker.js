@@ -5,6 +5,7 @@ const { embedBatch } = require('../services/embeddings');
 const { upsertVectors } = require('../services/pinecone');
 const documentStore = require('../db/documentStore');
 const chunkStore = require('../db/chunkStore');
+const { parseIntEnv } = require('../utils/envConfig');
 
 // A large document can produce hundreds of chunks - sending them all as one
 // Jina embeddings request works (their API has no batch size limit), but
@@ -13,7 +14,7 @@ const chunkStore = require('../db/chunkStore');
 // fixed-size sub-batches processed concurrently (bounded by
 // JINA_MAX_CONCURRENCY) is both safer for a big document and faster than
 // one giant sequential call.
-const EMBEDDING_BATCH_SIZE = parseInt(process.env.INGESTION_EMBEDDING_BATCH_SIZE || '50', 10);
+const EMBEDDING_BATCH_SIZE = parseIntEnv('INGESTION_EMBEDDING_BATCH_SIZE', 50, { min: 1 });
 
 function chunkArray(items, size) {
   const batches = [];

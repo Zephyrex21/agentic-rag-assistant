@@ -2,10 +2,11 @@ const express = require('express');
 
 const conversationStore = require('../db/conversationStore');
 const rag = require('../services/rag');
+const { parseIntEnv } = require('../utils/envConfig');
 
 const router = express.Router();
 
-const HISTORY_TURNS = parseInt(process.env.CONVERSATION_HISTORY_TURNS || '6', 10);
+const HISTORY_TURNS = parseIntEnv('CONVERSATION_HISTORY_TURNS', 6, { min: 0 });
 
 function errorResponse(res, status, code, message) {
   return res.status(status).json({ error: { code, message } });
