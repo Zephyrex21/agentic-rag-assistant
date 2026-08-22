@@ -32,11 +32,29 @@ router.post('/', async (req, res) => {
 });
 
 // GET /api/conversations - list all threads (most recently active first)
+// Optional ?limit=&offset= opt into pagination - both omitted (the
+// default) returns every conversation, unchanged from before this existed.
 router.get('/', async (req, res) => {
   try {
-    const conversations = await conversationStore.listConversations();
+    const options = {};
+    let limit;
+    if (req.query.limit !== undefined) {
+      limit = parseInt(req.query.limit, 10);
+      if (!Number.isFinite(limit) || limit <= 0) {
+        return errorResponse(res, 400, 'INVALID_LIMIT', '"limit" must be a positive integer.');
+      }
+      options.limit = limit;
+      const offset = req.query.offset !== undefined ? parseInt(req.query.offset, 10) : 0;
+      if (!Number.isFinite(offset) || offset < 0) {
+        return errorResponse(res, 400, 'INVALID_OFFSET', '"offset" must be a non-negative integer.');
+      }
+      options.offset = offset;
+    }
+
+    const conversations = await conversationStore.listConversations(options);
     res.json({
       conversations: conversations.map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt })),
+      ...(limit !== undefined ? { hasMore: conversations.length === limit } : {}),
     });
   } catch (err) {
     console.error('[conversations] list failed:', err.message);
@@ -101,7 +119,7 @@ router.post('/:id/messages', async (req, res) => {
 
     let assistantMessage = null;
 
-    for await (const event of rag.retrieveAndAnswerStream(question, { documentIds, history })) {
+    for await (const event of rag.retrieveAndAnswerStream(question, { documentIds, history, isCancelled: () => clientDisconnected })) {
       if (clientDisconnected) break; // stop doing work if nobody's listening anymore
 
       if (event.type === 'sources') {

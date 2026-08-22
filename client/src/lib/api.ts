@@ -73,12 +73,18 @@ export function onAccessRequired(handler: () => void): () => void {
 export class ApiError extends Error {
   code: string;
   status: number;
+  // Arbitrary extra fields the backend attached to the error (e.g.
+  // DUPLICATE_DOCUMENT's existingDocument) - see errorResponse()'s `extra`
+  // param in routes/documents.js. Optional and untyped since which fields
+  // are present depends entirely on `code`.
+  details?: Record<string, unknown>;
 
-  constructor(message: string, code: string, status: number) {
+  constructor(message: string, code: string, status: number, details?: Record<string, unknown>) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -90,7 +96,8 @@ async function handleResponse<T>(res: Response): Promise<T> {
     if (res.status === 401) notifyAccessRequired();
     const message = body?.error?.message || `Request failed with status ${res.status}`;
     const code = body?.error?.code || 'UNKNOWN_ERROR';
-    throw new ApiError(message, code, res.status);
+    const { code: _code, message: _message, ...details } = body?.error || {};
+    throw new ApiError(message, code, res.status, Object.keys(details).length > 0 ? details : undefined);
   }
 
   return body as T;
@@ -100,11 +107,13 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 export async function uploadDocument(
   file: File,
-  folderId?: string | null
+  folderId?: string | null,
+  allowDuplicate?: boolean
 ): Promise<{ documentId: string; filename: string; status: string }> {
   const formData = new FormData();
   formData.append('file', file);
   if (folderId) formData.append('folderId', folderId);
+  if (allowDuplicate) formData.append('allowDuplicate', 'true');
   // Deliberately no Content-Type header here - the browser sets
   // multipart/form-data with the correct boundary itself for FormData
   // bodies; only the access-key header is ours to add.

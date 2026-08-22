@@ -36,6 +36,7 @@ test('POST /api/documents/upload - rejects an unsupported file type', async () =
 });
 
 test('POST /api/documents/upload - accepts a supported file and starts ingestion', async (t) => {
+  t.mock.method(documentStore, 'findByContentHash', async () => null);
   t.mock.method(documentStore, 'create', async (doc) => doc);
   t.mock.method(ingestionWorker, 'processDocument', () => {}); // fire-and-forget, never awaited by the route
 
@@ -52,6 +53,7 @@ test('POST /api/documents/upload - accepts a supported file and starts ingestion
 
 test('POST /api/documents/upload - passes an optional folderId through to the store', async (t) => {
   let capturedDoc;
+  t.mock.method(documentStore, 'findByContentHash', async () => null);
   t.mock.method(documentStore, 'create', async (doc) => {
     capturedDoc = doc;
     return doc;
@@ -67,6 +69,7 @@ test('POST /api/documents/upload - passes an optional folderId through to the st
 });
 
 test('POST /api/documents/upload - a DB failure becomes a clean 500, not a crash', async (t) => {
+  t.mock.method(documentStore, 'findByContentHash', async () => null);
   t.mock.method(documentStore, 'create', async () => {
     throw new Error('connection refused');
   });
@@ -77,6 +80,63 @@ test('POST /api/documents/upload - a DB failure becomes a clean 500, not a crash
 
   assert.strictEqual(res.status, 500);
   assert.strictEqual(res.body.error.code, 'UPLOAD_FAILED');
+});
+
+// --- Duplicate upload detection ---
+// Regression coverage for the fix: re-uploading the exact same file used
+// to silently create a second, entirely separate document with no way to
+// tell it was a duplicate short of comparing filenames by eye.
+
+test('POST /api/documents/upload - a duplicate (same content hash) is rejected with 409 and details about the existing document', async (t) => {
+  t.mock.method(documentStore, 'findByContentHash', async () => ({
+    id: 'existing-doc',
+    filename: 'notes.txt',
+    uploadedAt: '2026-01-01T00:00:00.000Z',
+  }));
+  t.mock.method(documentStore, 'create', async () => {
+    throw new Error('FAIL: create should never be called when a duplicate is detected and not overridden');
+  });
+
+  const res = await request(app)
+    .post('/api/documents/upload')
+    .attach('file', Buffer.from('identical content'), 'notes-copy.txt');
+
+  assert.strictEqual(res.status, 409);
+  assert.strictEqual(res.body.error.code, 'DUPLICATE_DOCUMENT');
+  assert.strictEqual(res.body.error.existingDocument.id, 'existing-doc');
+  assert.strictEqual(res.body.error.existingDocument.filename, 'notes.txt');
+});
+
+test('POST /api/documents/upload - allowDuplicate=true bypasses the duplicate check and uploads anyway', async (t) => {
+  t.mock.method(documentStore, 'findByContentHash', async () => ({
+    id: 'existing-doc',
+    filename: 'notes.txt',
+    uploadedAt: '2026-01-01T00:00:00.000Z',
+  }));
+  t.mock.method(documentStore, 'create', async (doc) => doc);
+  t.mock.method(ingestionWorker, 'processDocument', () => {});
+
+  const res = await request(app)
+    .post('/api/documents/upload')
+    .field('allowDuplicate', 'true')
+    .attach('file', Buffer.from('identical content'), 'notes-copy.txt');
+
+  assert.strictEqual(res.status, 202);
+  assert.strictEqual(documentStore.create.mock.calls.length, 1);
+});
+
+test('POST /api/documents/upload - if the duplicate check itself fails (e.g. migration not run), upload still succeeds without it', async (t) => {
+  t.mock.method(documentStore, 'findByContentHash', async () => {
+    throw new Error('column "content_hash" does not exist');
+  });
+  t.mock.method(documentStore, 'create', async (doc) => doc);
+  t.mock.method(ingestionWorker, 'processDocument', () => {});
+
+  const res = await request(app)
+    .post('/api/documents/upload')
+    .attach('file', Buffer.from('hello'), 'notes.txt');
+
+  assert.strictEqual(res.status, 202, 'FAIL: a broken/unmigrated duplicate check must never break the core upload flow');
 });
 
 test('GET /api/documents/:id/status - returns the current status', async (t) => {

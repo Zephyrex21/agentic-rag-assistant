@@ -122,8 +122,15 @@ async function executeToolCalls(toolCalls, documentIds, fallbackQuery) {
         // worse query than whatever the model intended, but it's still a
         // real search, not a wasted turn that makes an easy, obviously
         // answerable question come back as "not enough information."
+        // originalQuestion (fallbackQuery here) preserves the user's real
+        // phrasing for topK sizing + rerank leniency even when `query` is
+        // the planner's own reformulated search string - see runRetrieval's
+        // JSDoc for why this split matters (a reformulated query like
+        // "main topics and methodology" silently loses the "tell me about
+        // this document"-style broadness signal that a narrower phrasing
+        // wouldn't have needed in the first place).
         const { query, usedFallback } = resolveSearchQuery(args, fallbackQuery);
-        const result = await runRetrieval(query, documentIds);
+        const result = await runRetrieval(query, documentIds, fallbackQuery);
         const chunks = result.chunks || [];
         const summary = chunks.length
           ? `Found ${chunks.length} relevant passage(s): ${chunks
@@ -183,8 +190,20 @@ async function executeToolCalls(toolCalls, documentIds, fallbackQuery) {
  * @param {Array<{role: string, content: string}>} history
  * @param {string[]} [documentIds]
  * @param {number} [maxSteps]
+ * @param {{callPlannerTurn?: Function, executeToolCalls?: Function}} [deps] -
+ *   injectable seams purely for offline testing (see test-agenticloop.js) -
+ *   every real caller relies on the defaults (the actual Groq-backed
+ *   callPlannerTurn/executeToolCalls), so this is invisible to production
+ *   behavior. This is what makes the loop's own control flow - step budget
+ *   enforcement, message threading between turns, chunk accumulation/dedup
+ *   by id, and the first-turn-throws-vs-later-turn-throws error handling -
+ *   independently testable without a live Groq key or network call, which
+ *   was previously only exercised by the eval harness and manual testing.
  */
-async function runAgentPlanner(question, history, documentIds, maxSteps = MAX_STEPS) {
+async function runAgentPlanner(question, history, documentIds, maxSteps = MAX_STEPS, deps = {}) {
+  const doCallPlannerTurn = deps.callPlannerTurn || callPlannerTurn;
+  const doExecuteToolCalls = deps.executeToolCalls || executeToolCalls;
+
   const messages = [
     { role: 'system', content: buildPlannerSystemPrompt(maxSteps) },
     ...(history || []).map((h) => ({ role: h.role === 'assistant' ? 'assistant' : 'user', content: h.content })),
@@ -200,7 +219,7 @@ async function runAgentPlanner(question, history, documentIds, maxSteps = MAX_ST
     let msg;
     try {
       // eslint-disable-next-line no-await-in-loop
-      msg = await callPlannerTurn(messages, maxSteps);
+      msg = await doCallPlannerTurn(messages, maxSteps);
     } catch (err) {
       // If this is the FIRST turn, propagate - runAgenticRetrieval's
       // caller (rag.js) falls back to the fixed pipeline entirely in that
@@ -220,7 +239,7 @@ async function runAgentPlanner(question, history, documentIds, maxSteps = MAX_ST
     messages.push(msg);
 
     // eslint-disable-next-line no-await-in-loop
-    const results = await executeToolCalls(msg.tool_calls, documentIds, question);
+    const results = await doExecuteToolCalls(msg.tool_calls, documentIds, question);
 
     for (const r of results) {
       for (const c of r.chunks) {
@@ -264,13 +283,16 @@ async function runAgentPlanner(question, history, documentIds, maxSteps = MAX_ST
  * @param {string} question
  * @param {string[]} [documentIds]
  * @param {Array<{role: string, content: string}>} [history]
- * @param {{maxSteps?: number}} [opts]
+ * @param {{maxSteps?: number, callPlannerTurn?: Function, executeToolCalls?: Function}} [opts]
  */
 async function runAgenticRetrieval(question, documentIds, history = [], opts = {}) {
   const maxSteps = opts.maxSteps || MAX_STEPS;
 
   const planStart = Date.now();
-  const plan = await runAgentPlanner(question, history, documentIds, maxSteps);
+  const plan = await runAgentPlanner(question, history, documentIds, maxSteps, {
+    callPlannerTurn: opts.callPlannerTurn,
+    executeToolCalls: opts.executeToolCalls,
+  });
   const planningMs = Date.now() - planStart;
 
   const traceRaw = {

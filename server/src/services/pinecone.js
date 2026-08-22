@@ -80,4 +80,17 @@ async function deleteByDocumentId(documentId, chunkCount) {
   }
 }
 
-module.exports = { upsertVectors, queryVectors, deleteByDocumentId };
+/**
+ * Lightweight connectivity check for the deep /health?deep=true path (see
+ * app.js / healthCheck.js) - describeIndexStats() is a cheap, read-only
+ * call that confirms both the API key AND the index name are actually
+ * valid and reachable, unlike the existing /health's env-var presence
+ * check which can say "configured" for a key that's simply wrong.
+ */
+async function checkConnection() {
+  const index = getIndex();
+  const stats = await index.describeIndexStats();
+  return { vectorCount: stats.totalRecordCount ?? stats.totalVectorCount ?? null };
+}
+
+module.exports = { upsertVectors, queryVectors, deleteByDocumentId, checkConnection };

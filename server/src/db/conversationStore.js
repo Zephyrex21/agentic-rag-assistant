@@ -1,4 +1,5 @@
 const { getSupabase } = require('./supabaseClient');
+const documentStore = require('./documentStore');
 
 const CONVERSATIONS = 'conversations';
 const MESSAGES = 'messages';
@@ -30,11 +31,65 @@ async function createConversation(title = 'New conversation') {
   return conversationFromDb(data);
 }
 
-async function listConversations() {
+/**
+ * @param {{ limit?: number, offset?: number }} [options] - OPT-IN
+ *   pagination, same convention as documentStore.list: omitted entirely
+ *   (the default) returns every conversation, exactly as before this
+ *   existed, so the existing /api/conversations route with no query
+ *   params is completely unaffected.
+ */
+async function listConversations(options = {}) {
   const supabase = getSupabase();
-  const { data, error } = await supabase.from(CONVERSATIONS).select('*').order('updated_at', { ascending: false });
+  let query = supabase.from(CONVERSATIONS).select('*').order('updated_at', { ascending: false });
+  if (typeof options.limit === 'number') {
+    const offset = typeof options.offset === 'number' ? options.offset : 0;
+    query = query.range(offset, offset + options.limit - 1);
+  }
+  const { data, error } = await query;
   if (error) throw new Error(`conversationStore.listConversations failed: ${error.message}`);
   return (data || []).map(conversationFromDb);
+}
+
+/**
+ * Flags any source in `messages` whose documentId no longer resolves to an
+ * existing document (i.e. that document was deleted after this message was
+ * answered) with `documentDeleted: true` - checked at READ time rather than
+ * updated at delete time, so deleting a document stays a fast, single-purpose
+ * operation and this cost is only ever paid by someone actually opening an
+ * affected conversation. The excerpt/fullText snapshotted into `sources` at
+ * answer-time is untouched either way - only the citation's continued
+ * validity is what's being flagged, not the content itself, which was
+ * always a point-in-time copy regardless of the source document's fate.
+ * Fails soft: if the existence check itself errors (a transient DB blip),
+ * the conversation is still returned, just without this annotation for
+ * that one request - a missing "deleted" badge is a much smaller problem
+ * than failing to load the conversation at all.
+ */
+async function annotateStaleCitations(messages) {
+  const referencedIds = new Set();
+  for (const m of messages) {
+    if (!m.sources) continue;
+    for (const s of m.sources) {
+      if (s.documentId) referencedIds.add(s.documentId);
+    }
+  }
+  if (referencedIds.size === 0) return messages;
+
+  let existingIds;
+  try {
+    existingIds = await documentStore.existsMany([...referencedIds]);
+  } catch (err) {
+    console.warn(`[conversationStore] stale-citation check failed (${err.message}), returning messages unannotated.`);
+    return messages;
+  }
+
+  return messages.map((m) => {
+    if (!m.sources) return m;
+    return {
+      ...m,
+      sources: m.sources.map((s) => (s.documentId && !existingIds.has(s.documentId) ? { ...s, documentDeleted: true } : s)),
+    };
+  });
 }
 
 async function getConversation(conversationId) {
@@ -54,7 +109,8 @@ async function getConversation(conversationId) {
     .order('created_at', { ascending: true });
   if (msgErr) throw new Error(`conversationStore.getConversation (messages) failed: ${msgErr.message}`);
 
-  return { ...conversationFromDb(convo), messages: (messages || []).map(messageFromDb) };
+  const annotatedMessages = await annotateStaleCitations((messages || []).map(messageFromDb));
+  return { ...conversationFromDb(convo), messages: annotatedMessages };
 }
 
 /**
@@ -148,4 +204,5 @@ module.exports = {
   updateTitle,
   updateMessage,
   deleteConversation,
+  annotateStaleCitations,
 };

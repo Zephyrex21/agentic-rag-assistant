@@ -199,10 +199,32 @@ function toChunkRef(c) {
  * empty", distinct from an empty array which elsewhere means "no query was
  * even attempted" (see agenticRag.js's skipped-search path).
  *
- * @param {string} searchQuery
+ * @param {string} searchQuery - the actual query used for embedding/hybrid
+ *   search (a rewritten/reformulated query, or a tool-call's own query arg
+ *   in agentic mode) - optimized for finding good candidates, not for
+ *   preserving the user's original phrasing.
  * @param {string[]} [documentIds]
+ * @param {string} [originalQuestion] - the user's original, unreformulated
+ *   question, used ONLY for the "is this a broad question" signal
+ *   (computeTopK's widening + the reranker's broad-question leniency - see
+ *   reranker.js's buildRerankPrompt). Defaults to searchQuery when omitted.
+ *   This split matters specifically for agentic mode: the planner's
+ *   tool-call query is deliberately reformulated to be a GOOD SEARCH QUERY
+ *   (e.g. turning "tell me about this document" into something like "main
+ *   topics and methodology"), which is exactly the kind of rephrasing that
+ *   silently drops the "tell me about"/"summarize"/"overview" wording
+ *   BROAD_QUESTION_RE and the reranker's leniency clause key off of. Without
+ *   this split, a perfectly reasonable planner reformulation can make a
+ *   genuinely broad question get scored and reranked as if it were a narrow
+ *   one, and fail with a false "I don't have enough information" even
+ *   though the document plainly has relevant content. The fixed pipeline
+ *   passes its own rewritten query as searchQuery but the true original
+ *   question as originalQuestion for the same reason - rewriteQuery mostly
+ *   just resolves pronouns/references, but there's no reason to rely on
+ *   that holding for every case when the real original is right there.
  */
-async function runRetrieval(searchQuery, documentIds) {
+async function runRetrieval(searchQuery, documentIds, originalQuestion) {
+  const broadnessQuery = originalQuestion || searchQuery;
   const traceRaw = {};
 
   // Multi-query retrieval: search with the original query AND a few
@@ -250,7 +272,7 @@ async function runRetrieval(searchQuery, documentIds) {
   traceRaw.dedupEnabled = ENABLE_DEDUPLICATION;
   traceRaw.candidatePoolCount = candidatePool.length;
 
-  const topK = computeTopK(searchQuery);
+  const topK = computeTopK(broadnessQuery);
   traceRaw.topK = topK;
   traceRaw.baseTopK = TOP_K;
   traceRaw.rerankEnabled = ENABLE_RERANKING;
@@ -260,7 +282,7 @@ async function runRetrieval(searchQuery, documentIds) {
 
   t = Date.now();
   if (ENABLE_RERANKING) {
-    const rerankKept = await rerank(searchQuery, candidatePool, topK);
+    const rerankKept = await rerank(broadnessQuery, candidatePool, topK);
     if (rerankKept.length === 0) {
       // The reranker rejected everything. This can be a genuinely correct
       // call (nothing relevant exists) - but it can also be an overly
@@ -325,7 +347,7 @@ async function retrieveChunks(question, { documentIds, history = [] } = {}) {
   const searchQuery = ENABLE_QUERY_REWRITE ? await rewriteQuery(question, history) : question;
   const rewriteMs = Date.now() - t;
 
-  const { chunks, listsUsed, traceRaw: retrievalTraceRaw } = await runRetrieval(searchQuery, documentIds);
+  const { chunks, listsUsed, traceRaw: retrievalTraceRaw } = await runRetrieval(searchQuery, documentIds, question);
 
   const traceRaw = {
     mode: 'fixed',
@@ -450,7 +472,23 @@ const BACKGROUND_VERIFICATION_TIMEOUT_MS = parseInt(process.env.BACKGROUND_VERIF
  * retrieveAndAnswerStream - a generator's multiple yields can't be raced
  * against a single timeout the same simple way a single returned promise can.
  */
-async function runBackgroundVerification({ question, fullAnswer, finalSources, workingChunks, listsUsed, traceRaw, documentIds, history, streamStart }) {
+async function runBackgroundVerification({
+  question,
+  fullAnswer,
+  finalSources,
+  workingChunks,
+  listsUsed,
+  traceRaw,
+  documentIds,
+  history,
+  streamStart,
+  isCancelled = () => false,
+  // Injectable seams purely for offline testing (see test-cancellation.js) -
+  // every real caller relies on the defaults (the actual verifyAnswer/
+  // generateAnswer), so this is invisible to production behavior.
+  verifyAnswerFn = verifyAnswer,
+  generateAnswerFn = generateAnswer,
+}) {
   traceRaw.verificationEnabled = true;
   // A broad/multi-part question's answer necessarily synthesizes across
   // many sources in reworded language - a strict per-claim verification
@@ -461,7 +499,7 @@ async function runBackgroundVerification({ question, fullAnswer, finalSources, w
   const isBroad = BROAD_QUESTION_RE.test(question);
 
   let t = Date.now();
-  const check = await verifyAnswer(question, fullAnswer, finalSources, { isBroad });
+  const check = await verifyAnswerFn(question, fullAnswer, finalSources, { isBroad });
   traceRaw.verificationMs = Date.now() - t;
   traceRaw.verificationIssue = check.issue;
 
@@ -479,6 +517,18 @@ async function runBackgroundVerification({ question, fullAnswer, finalSources, w
   // SUGGESTION, not a replacement. Not streamed: it isn't shown live, only
   // if/when it's accepted, so a single non-streaming call is simpler and
   // no worse for latency than accumulating a stream server-side would be.
+  //
+  // Worth checking for cancellation again right here specifically: the
+  // verifyAnswer call just above is the single most expensive/slowest step
+  // in this whole background path, so it's the most likely place a client
+  // that was going to disconnect already has. Revision generation below is
+  // itself 2 more LLM calls (revised answer + a second verify pass) that
+  // would otherwise run for a result nobody will ever see.
+  if (isCancelled()) {
+    console.log('[rag] client disconnected during background verification - skipping revision generation.');
+    return null;
+  }
+
   let revisedChunks = workingChunks;
 
   // Agentic mode CAN get one more chance to go find better source material
@@ -515,7 +565,7 @@ async function runBackgroundVerification({ question, fullAnswer, finalSources, w
 
   const revision = { previousAnswer: fullAnswer, issues: check.issue };
   t = Date.now();
-  const revisedAnswer = await generateAnswer(question, revisedChunks, history, revision);
+  const revisedAnswer = await generateAnswerFn(question, revisedChunks, history, revision);
   traceRaw.revisionGenerationMs = Date.now() - t;
 
   const revisedCitedNumbers = extractCitedSourceNumbers(revisedAnswer);
@@ -524,7 +574,7 @@ async function runBackgroundVerification({ question, fullAnswer, finalSources, w
   // A second check purely so the suggestion itself carries an honest
   // `verified` flag if accepted - does not trigger a further revision loop.
   t = Date.now();
-  const secondCheck = await verifyAnswer(question, revisedAnswer, suggestedSources, { isBroad });
+  const secondCheck = await verifyAnswerFn(question, revisedAnswer, suggestedSources, { isBroad });
   traceRaw.secondVerificationMs = Date.now() - t;
 
   traceRaw.verificationPassed = secondCheck.passed;
@@ -547,7 +597,12 @@ async function runBackgroundVerification({ question, fullAnswer, finalSources, w
 
 async function* retrieveAndAnswerStream(question, options = {}) {
   const streamStart = Date.now();
-  const { documentIds, history = [] } = options;
+  // isCancelled is optional (defaults to "never cancelled") - callers that
+  // don't track client disconnection (or existing tests calling this
+  // directly) get identical behavior to before this existed. See
+  // query.js/conversations.js for where the real one (backed by the
+  // response's 'close' event) gets passed in.
+  const { documentIds, history = [], isCancelled = () => false } = options;
 
   let retrieval = null;
   if (ENABLE_AGENTIC_MODE) {
@@ -613,12 +668,26 @@ async function* retrieveAndAnswerStream(question, options = {}) {
 
   if (!ENABLE_SELF_VERIFICATION) return;
 
+  // If the client is already gone by the time we'd start this, don't
+  // bother - nobody's listening for the 'verified'/'revision_available'
+  // event this would eventually produce, and every step inside
+  // runBackgroundVerification below is a real Groq/embedding call against
+  // free-tier quota. This is the actual fix for the gap where background
+  // work used to run to completion (up to BACKGROUND_VERIFICATION_TIMEOUT_MS)
+  // regardless of whether anyone was still connected - the route only ever
+  // checked clientDisconnected when deciding whether to WRITE the result,
+  // never before starting the work that produced it.
+  if (isCancelled()) {
+    console.log('[rag] client disconnected before background verification started - skipping.');
+    return;
+  }
+
   // Everything from here on runs AFTER `done` - strictly a background
   // check, bounded by BACKGROUND_VERIFICATION_TIMEOUT_MS. Nothing yielded
   // below should ever be interpreted as replacing what was already shown;
   // see the type-by-type contract in this function's doc comment above.
   const backgroundResult = await Promise.race([
-    runBackgroundVerification({ question, fullAnswer, finalSources, workingChunks, listsUsed, traceRaw, documentIds, history, streamStart }),
+    runBackgroundVerification({ question, fullAnswer, finalSources, workingChunks, listsUsed, traceRaw, documentIds, history, streamStart, isCancelled }),
     new Promise((resolve) => {
       setTimeout(() => resolve(null), BACKGROUND_VERIFICATION_TIMEOUT_MS);
     }),
@@ -640,4 +709,5 @@ module.exports = {
   buildSources,
   toChunkRef,
   BACKGROUND_VERIFICATION_TIMEOUT_MS,
+  runBackgroundVerification,
 };

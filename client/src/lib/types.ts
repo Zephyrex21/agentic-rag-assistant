@@ -26,6 +26,13 @@ export interface Source {
   excerpt: string;
   fullText: string;
   relevanceScore: number;
+  // True when the source document has since been deleted - the excerpt/
+  // fullText above are still the real snapshot from when this answer was
+  // generated (nothing about the answer's content is wrong), this only
+  // means the citation itself no longer points at anything you can open.
+  // Set server-side at read time, not at delete time - see
+  // conversationStore.js's annotateStaleCitations.
+  documentDeleted?: boolean;
 }
 
 // --- Pipeline observability ---

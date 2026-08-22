@@ -9,6 +9,17 @@ const mammoth = require('mammoth');
 // forever instead of failing cleanly. This bounds the worst case so a
 // document always ends up either ready or failed, never stuck in limbo.
 const PDF_EXTRACTION_TIMEOUT_MS = parseInt(process.env.PDF_EXTRACTION_TIMEOUT_MS || '60000', 10);
+// A scanned/image-only PDF still "parses" successfully (pdf-parse throws no
+// exception) - there's just no real text LAYER underneath the page images
+// for it to extract, only whatever sparse text a cover page, watermark, or
+// embedded metadata happens to contain. Checked as chars-per-page (not a
+// flat character count) so the same threshold makes sense for both a
+// 1-page scan and a 40-page one. 25 is deliberately low - low enough that a
+// legitimately sparse but real page (a title slide, a mostly-diagram page)
+// doesn't false-positive, high enough that a page that's genuinely just a
+// scanned image (0-10 stray characters from a watermark/header) still gets
+// caught.
+const PDF_MIN_CHARS_PER_PAGE = parseInt(process.env.PDF_MIN_CHARS_PER_PAGE || '25', 10);
 
 function withTimeout(promise, ms, message) {
   let timer;
@@ -36,6 +47,9 @@ function describePdfError(err) {
   }
   if (/timed out/i.test(message)) {
     return message; // already a clear, specific message from withTimeout above
+  }
+  if (/^This PDF has (no|very little) extractable text/i.test(message)) {
+    return message; // already a clear, specific message from extractText's post-parse text-density check below
   }
   return `Could not read this PDF (${message || 'unknown error'}). Try re-saving/re-exporting it and uploading again.`;
 }
@@ -87,7 +101,30 @@ async function extractText(filePath) {
         PDF_EXTRACTION_TIMEOUT_MS,
         `PDF parsing timed out after ${Math.round(PDF_EXTRACTION_TIMEOUT_MS / 1000)}s - this file may be unusually large or complex for the current server resources. Try a smaller PDF, or split this one into parts.`
       );
-      return sanitizeExtractedText(data.text);
+      const sanitized = sanitizeExtractedText(data.text);
+      const trimmed = sanitized.trim();
+      const pageCount = data.numpages || 1;
+      const charsPerPage = trimmed.length / pageCount;
+      const pageWord = pageCount === 1 ? 'page' : 'pages';
+
+      // Zero text at all - the clearest, most common signal of a
+      // scanned/image-based PDF (every page is a picture, nothing pdf-parse
+      // can read as text).
+      if (!trimmed) {
+        throw new Error(
+          `This PDF has no extractable text (${pageCount} ${pageWord} scanned, 0 characters found) - it looks like a scanned or image-based PDF rather than one with a real text layer underneath. Run it through OCR first (Adobe Acrobat's "Recognize Text", Google Drive's "Open with Google Docs", or a tool like OCRmyPDF all work), then re-upload the OCR'd version.`
+        );
+      }
+      // Some text, but far too little relative to the page count - usually
+      // means most pages are scanned images and only a cover page, header,
+      // or watermark had real selectable text.
+      if (charsPerPage < PDF_MIN_CHARS_PER_PAGE) {
+        throw new Error(
+          `This PDF has very little extractable text (about ${Math.round(charsPerPage)} character${Math.round(charsPerPage) === 1 ? '' : 's'} per page across ${pageCount} ${pageWord}) - it's likely mostly scanned/image content with only a small amount of real text. Run it through OCR first, then re-upload the OCR'd version.`
+        );
+      }
+
+      return sanitized;
     } catch (err) {
       throw new Error(describePdfError(err));
     }
@@ -115,4 +152,11 @@ function isSupportedFile(filename) {
   return ['.txt', '.md', '.pdf', '.docx'].includes(ext);
 }
 
-module.exports = { extractText, isSupportedFile, describePdfError, sanitizeExtractedText, PDF_EXTRACTION_TIMEOUT_MS };
+module.exports = {
+  extractText,
+  isSupportedFile,
+  describePdfError,
+  sanitizeExtractedText,
+  PDF_EXTRACTION_TIMEOUT_MS,
+  PDF_MIN_CHARS_PER_PAGE,
+};

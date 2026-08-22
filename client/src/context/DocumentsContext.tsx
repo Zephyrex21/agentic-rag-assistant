@@ -9,6 +9,7 @@ import {
 } from 'react';
 import {
   createFolder as apiCreateFolder,
+  ApiError,
   deleteDocument,
   deleteFolder as apiDeleteFolder,
   getDocumentStatus,
@@ -98,10 +99,10 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const upload = useCallback(
-    async (file: File, folderId: string | null = null) => {
+    async (file: File, folderId: string | null = null, allowDuplicate = false) => {
       setUploadError(null);
       try {
-        const result = await uploadDocument(file, folderId);
+        const result = await uploadDocument(file, folderId, allowDuplicate);
         const optimisticDoc: DocumentSummary = {
           id: result.documentId,
           filename: result.filename,
@@ -113,6 +114,22 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         setDocuments((prev) => [optimisticDoc, ...prev]);
         pollStatus(result.documentId);
       } catch (err) {
+        // A native confirm() here (rather than a custom modal) is a
+        // deliberate, small trade-off - this is a rare edge case (an exact
+        // re-upload), and a blocking yes/no prompt is the simplest correct
+        // way to let someone override it without a whole new modal
+        // component for something this infrequent.
+        if (err instanceof ApiError && err.code === 'DUPLICATE_DOCUMENT') {
+          const existing = err.details?.existingDocument as { filename: string; uploadedAt: string } | undefined;
+          const detail = existing
+            ? ` It looks identical to "${existing.filename}", uploaded ${new Date(existing.uploadedAt).toLocaleDateString()}.`
+            : '';
+          const proceed = window.confirm(`"${file.name}" appears to already be uploaded.${detail}\n\nUpload it again anyway?`);
+          if (proceed) {
+            await upload(file, folderId, true);
+          }
+          return;
+        }
         setUploadError(err instanceof Error ? err.message : 'Upload failed.');
       }
     },

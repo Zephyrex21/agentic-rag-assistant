@@ -1,6 +1,8 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
 const { randomUUID } = require('crypto');
 
 const documentStore = require('../db/documentStore');
@@ -32,8 +34,8 @@ const upload = multer({
   },
 });
 
-function errorResponse(res, status, code, message) {
-  return res.status(status).json({ error: { code, message } });
+function errorResponse(res, status, code, message, extra) {
+  return res.status(status).json({ error: { code, message, ...extra } });
 }
 
 // POST /api/documents/upload
@@ -56,6 +58,40 @@ router.post('/upload', (req, res) => {
     // blip, table missing, etc.) - wrapped so a DB error becomes a clean 500 response
     // instead of an unhandled rejection that takes the whole server down.
     try {
+      const contentHash = crypto.createHash('sha256').update(fs.readFileSync(req.file.path)).digest('hex');
+
+      // Duplicate detection is best-effort and fails OPEN, not closed: if
+      // migration_006 hasn't been run yet on someone's Supabase project,
+      // findByContentHash throws a "column content_hash does not exist"
+      // error - and the upload must still succeed exactly as it did before
+      // this feature existed, just without duplicate detection, rather
+      // than breaking the entire upload flow over an optional enhancement.
+      let existingDuplicate = null;
+      try {
+        existingDuplicate = await documentStore.findByContentHash(contentHash);
+      } catch (hashErr) {
+        console.warn(
+          `[documents] duplicate-content check unavailable (${hashErr.message}) - has migration_006_document_content_hash.sql been run? Proceeding without it.`
+        );
+      }
+
+      if (existingDuplicate && req.body.allowDuplicate !== 'true') {
+        fs.unlink(req.file.path, () => {}); // not processing this upload - clean up the temp file
+        return errorResponse(
+          res,
+          409,
+          'DUPLICATE_DOCUMENT',
+          `This file looks identical to "${existingDuplicate.filename}", already uploaded on ${new Date(existingDuplicate.uploadedAt).toLocaleDateString()}. Upload it again anyway?`,
+          {
+            existingDocument: {
+              id: existingDuplicate.id,
+              filename: existingDuplicate.filename,
+              uploadedAt: existingDuplicate.uploadedAt,
+            },
+          }
+        );
+      }
+
       const documentId = randomUUID();
       const doc = {
         id: documentId,
@@ -67,6 +103,7 @@ router.post('/upload', (req, res) => {
         // Optional - multer puts non-file form fields on req.body. Empty
         // string/undefined both mean "no folder", not a literal folder id.
         folderId: req.body.folderId || null,
+        contentHash,
       };
 
       await documentStore.create(doc);
@@ -107,11 +144,30 @@ router.get('/:id/status', async (req, res) => {
 // GET /api/documents
 // Optional ?folderId=<uuid> filters to one folder; ?folderId=none lists
 // only uncategorized documents; omitted entirely lists everything.
+// Optional ?limit=&offset= opt into pagination - both omitted (the
+// default) returns every matching document, unchanged from before this
+// existed. `hasMore` lets the frontend know whether another page exists
+// without a separate count query - true whenever exactly `limit` rows
+// came back, since that's the only case where a further page might exist.
 router.get('/', async (req, res) => {
   try {
     const options = {};
     if (req.query.folderId === 'none') options.folderId = null;
     else if (req.query.folderId) options.folderId = req.query.folderId;
+
+    let limit;
+    if (req.query.limit !== undefined) {
+      limit = parseInt(req.query.limit, 10);
+      if (!Number.isFinite(limit) || limit <= 0) {
+        return errorResponse(res, 400, 'INVALID_LIMIT', '"limit" must be a positive integer.');
+      }
+      options.limit = limit;
+      const offset = req.query.offset !== undefined ? parseInt(req.query.offset, 10) : 0;
+      if (!Number.isFinite(offset) || offset < 0) {
+        return errorResponse(res, 400, 'INVALID_OFFSET', '"offset" must be a non-negative integer.');
+      }
+      options.offset = offset;
+    }
 
     const documents = await documentStore.list(options);
     res.json({
@@ -123,6 +179,7 @@ router.get('/', async (req, res) => {
         uploadedAt: d.uploadedAt,
         folderId: d.folderId ?? null,
       })),
+      ...(limit !== undefined ? { hasMore: documents.length === limit } : {}),
     });
   } catch (err) {
     console.error('[documents] list failed:', err.message);

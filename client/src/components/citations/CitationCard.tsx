@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { FileText, ChevronDown } from 'lucide-react';
+import { FileText, ChevronDown, AlertTriangle } from 'lucide-react';
 import type { Source } from '../../lib/types';
 
 export function CitationCard({ source }: { source: Source }) {
@@ -34,6 +34,20 @@ export function CitationCard({ source }: { source: Source }) {
           {source.section && <p className="text-xs text-ink-muted">{source.section}</p>}
         </div>
       </div>
+
+      {source.documentDeleted && (
+        <div
+          className="mt-2.5 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px]"
+          style={{
+            background: 'color-mix(in srgb, var(--highlight) 8%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--highlight) 30%, transparent)',
+            color: 'var(--highlight)',
+          }}
+        >
+          <AlertTriangle size={11} className="shrink-0" />
+          This document has since been deleted - the excerpt below is preserved from when this answer was generated.
+        </div>
+      )}
 
       <p className="mt-3 text-sm leading-relaxed text-ink">
         {expanded ? source.fullText : source.excerpt}

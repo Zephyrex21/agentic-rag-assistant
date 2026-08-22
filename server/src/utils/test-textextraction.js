@@ -101,4 +101,31 @@ const cleanText = 'This is completely ordinary text with no issues at all.';
 console.assert(sanitizeExtractedText(cleanText) === cleanText, 'FAIL: already-clean text should pass through unchanged');
 console.log('✅ Already-clean text passes through completely unchanged');
 
+// --- scanned/image-based PDF error messages (describePdfError passthrough) ---
+// Regression tests for the production bug report: a user's friend uploaded
+// a PDF from mobile that failed with a generic "No extractable text found
+// in this file" - giving no hint of what to actually do about it. The fix
+// lives in extractText's post-parse chars-per-page check (not exercised
+// here without a real pdf-parse call - see the file header note), but
+// describePdfError's passthrough for those specific messages IS pure logic
+// and is what's tested here.
+console.log('\n=== Scanned PDF Error Message Test ===\n');
+
+const zeroTextErr = {
+  name: 'Error',
+  message: 'This PDF has no extractable text (5 pages scanned, 0 characters found) - it looks like a scanned or image-based PDF rather than one with a real text layer underneath. Run it through OCR first (Adobe Acrobat\'s "Recognize Text", Google Drive\'s "Open with Google Docs", or a tool like OCRmyPDF all work), then re-upload the OCR\'d version.',
+};
+const zeroTextMsg = describePdfError(zeroTextErr);
+console.assert(zeroTextMsg === zeroTextErr.message, 'FAIL: a zero-extractable-text message should pass through unchanged, already clear and specific');
+console.assert(/OCR/i.test(zeroTextMsg), 'FAIL: should mention OCR as the fix');
+console.log('✅ A scanned/image-based PDF (zero extractable text) gets a specific message naming OCR as the fix, not the generic fallback');
+
+const lowDensityErr = {
+  name: 'Error',
+  message: 'This PDF has very little extractable text (about 3 characters per page across 12 pages) - it\'s likely mostly scanned/image content with only a small amount of real text. Run it through OCR first, then re-upload the OCR\'d version.',
+};
+const lowDensityMsg = describePdfError(lowDensityErr);
+console.assert(lowDensityMsg === lowDensityErr.message, 'FAIL: a low-text-density message should pass through unchanged, already clear and specific');
+console.log('✅ A mostly-scanned PDF (very low text density, e.g. only a cover page has real text) gets a specific message, not the generic fallback');
+
 console.log('\n✅ All text extraction tests passed.');

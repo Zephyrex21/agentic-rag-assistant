@@ -9,6 +9,7 @@ const queryRouter = require('./routes/query');
 const conversationsRouter = require('./routes/conversations');
 const foldersRouter = require('./routes/folders');
 const { KNOWN_PROBLEMATIC_MODELS } = require('./services/modelFallback');
+const healthCheck = require('./services/healthCheck');
 const { requireAppAccessKey } = require('./middleware/auth');
 const { generalLimiter, expensiveLimiter } = require('./middleware/rateLimit');
 
@@ -65,7 +66,7 @@ process.on('unhandledRejection', (reason) => {
   console.error('[unhandledRejection] This should have been caught in a route handler:', reason);
 });
 
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
   const configuredModels = {
     GENERATION_MODEL: process.env.GENERATION_MODEL || 'llama-3.3-70b-versatile',
     GENERATION_MODEL_FALLBACK: process.env.GENERATION_MODEL_FALLBACK || 'openai/gpt-oss-120b',
@@ -79,7 +80,7 @@ app.get('/health', (req, res) => {
     .filter(([, model]) => KNOWN_PROBLEMATIC_MODELS.includes(model))
     .map(([envVar, model]) => `${envVar}=${model} has been decommissioned by Groq - consider updating`);
 
-  res.json({
+  const body = {
     status: 'ok',
     phase: 'Phase 8 - Agentic Retrieval (Groq tool calling)',
     groqConfigured: Boolean(process.env.GROQ_API_KEY),
@@ -100,7 +101,28 @@ app.get('/health', (req, res) => {
       pipelineTrace: process.env.ENABLE_PIPELINE_TRACE !== 'false',
     },
     ...(modelWarnings.length > 0 ? { modelWarnings } : {}),
-  });
+  };
+
+  // The default response above stays exactly as fast and side-effect-free
+  // as it always was - hosting platforms/uptime monitors polling /health
+  // every few seconds should never trigger a live call to every provider.
+  // ?deep=true is an explicit opt-in for someone actually debugging a
+  // "configured but not working" situation, where env-var presence alone
+  // isn't enough to tell what's wrong.
+  if (req.query.deep === 'true') {
+    try {
+      body.deepChecks = await healthCheck.checkDeepHealth();
+    } catch (err) {
+      // checkDeepHealth is designed to never throw (every individual
+      // check is already wrapped) - this is defense-in-depth only, so a
+      // regression there degrades to "deep checks unavailable" instead of
+      // taking down the whole /health response.
+      console.error('[app] checkDeepHealth failed unexpectedly:', err.message);
+      body.deepChecks = { error: 'Deep health check failed unexpectedly - see server logs.' };
+    }
+  }
+
+  res.json(body);
 });
 
 // The expensive limiter sits in front of entire documents/query/conversations

@@ -23,9 +23,11 @@
     "test:tracebuilder": "node src/utils/test-tracebuilder.js",
     "test:agenttools": "node src/utils/test-agenttools.js",
     "test:agenticplanner": "node src/utils/test-agenticplanner.js",
+    "test:agenticloop": "node src/utils/test-agenticloop.js",
     "test:embeddings": "node src/utils/test-embeddings.js",
     "test:textextraction": "node src/utils/test-textextraction.js",
     "test:ingestion": "node src/utils/test-ingestion.js",
+    "test:cancellation": "node src/utils/test-cancellation.js",
     "test:routes": "node --test \"test/*.test.js\"",
     "eval": "node eval/run-eval.js",
     "diagnose:keys": "node src/utils/diagnose-api-keys.js"
