@@ -23,7 +23,8 @@ export function MessageBubble({ message }: { message: Message }) {
           className="max-w-[80%] rounded-2xl rounded-br-md px-4 py-2.5 text-[15px] text-accent-ink"
           style={{
             background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
-            boxShadow: '0 1px 0 0 rgba(255,255,255,0.15) inset, 0 4px 14px -6px var(--accent)',
+            boxShadow:
+              '0 1px 0 0 rgba(255,255,255,0.2) inset, 0 4px 20px -6px color-mix(in srgb, var(--accent) 80%, transparent)',
           }}
         >
           {message.content}
@@ -45,10 +46,10 @@ export function MessageBubble({ message }: { message: Message }) {
       className="flex gap-3"
     >
       <div
-        className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-accent-ink"
+        className="relative mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-accent-ink"
         style={{
           background: 'linear-gradient(135deg, var(--accent), var(--accent-2))',
-          boxShadow: '0 2px 8px -2px var(--accent)',
+          boxShadow: '0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent), 0 2px 12px -2px color-mix(in srgb, var(--accent) 80%, transparent)',
         }}
       >
         <Sparkles size={13} />
@@ -89,16 +90,19 @@ export function MessageBubble({ message }: { message: Message }) {
 
 function SearchingIndicator() {
   return (
-    <div className="flex items-center gap-2 text-sm text-ink-muted">
+    <div className="flex items-center gap-2.5 text-sm text-ink-muted">
       <Search size={13} className="shrink-0" />
       <span>Searching your documents</span>
-      <span className="flex items-center gap-0.5">
-        {[0, 1, 2].map((i) => (
-          <motion.span
+      <span className="flex items-end gap-[2px]">
+        {[7, 11, 7].map((h, i) => (
+          <span
             key={i}
-            className="h-1 w-1 rounded-full bg-ink-muted"
-            animate={{ opacity: [0.3, 1, 0.3] }}
-            transition={{ duration: 1.1, repeat: Infinity, delay: i * 0.15, ease: 'easeInOut' }}
+            className="w-[2.5px] rounded-full bg-accent"
+            style={{
+              height: h,
+              animation: `signal-pulse-${(i % 3) + 1} ${0.9 + i * 0.15}s ease-in-out infinite`,
+              transformOrigin: 'bottom',
+            }}
           />
         ))}
       </span>

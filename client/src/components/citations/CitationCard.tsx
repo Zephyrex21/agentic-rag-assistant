@@ -12,7 +12,7 @@ export function CitationCard({ source }: { source: Source }) {
       initial={{ opacity: 0, scale: 0.96, y: -4 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-      className="glass-panel w-80 max-w-[85vw] rounded-2xl p-4 shadow-2xl"
+      className="signal-theme font-signal-body glass-panel w-80 max-w-[85vw] rounded-2xl p-4 shadow-2xl"
     >
       <div className="flex items-start gap-2.5">
         <div

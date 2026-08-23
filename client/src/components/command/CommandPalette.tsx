@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react';
 import { Command } from 'cmdk';
 import * as Dialog from '@radix-ui/react-dialog';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageSquarePlus, MessageSquare, FileText, Sun, Moon, Search } from 'lucide-react';
+import { MessageSquarePlus, MessageSquare, FileText, Search, Home, Sun, Moon } from 'lucide-react';
 import { useConversations } from '../../context/ConversationsContext';
 import { useTheme } from '../../context/ThemeContext';
 
 interface CommandPaletteProps {
   onNavigateToDocuments: () => void;
+  onGoHome: () => void;
 }
 
 /** Animates an item's inner content only - Command.Item itself stays a
@@ -27,7 +28,7 @@ function StaggerRow({ i, children }: { i: number; children: React.ReactNode }) {
   );
 }
 
-export function CommandPalette({ onNavigateToDocuments }: CommandPaletteProps) {
+export function CommandPalette({ onNavigateToDocuments, onGoHome }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
   const { conversations, createConversation, selectConversation } = useConversations();
   const { theme, toggleTheme } = useTheme();
@@ -59,7 +60,7 @@ export function CommandPalette({ onNavigateToDocuments }: CommandPaletteProps) {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.15 }}
-                className="fixed inset-0 z-[100] bg-overlay"
+                className="signal-theme fixed inset-0 z-[100] bg-overlay"
               />
             </Dialog.Overlay>
             <Dialog.Content asChild aria-describedby={undefined}>
@@ -68,7 +69,7 @@ export function CommandPalette({ onNavigateToDocuments }: CommandPaletteProps) {
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.96, y: -8 }}
                 transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                className="fixed left-1/2 top-[18vh] z-[101] w-[92vw] max-w-lg -translate-x-1/2"
+                className="signal-theme font-signal-body fixed left-1/2 top-[18vh] z-[101] w-[92vw] max-w-lg -translate-x-1/2"
               >
                 <Dialog.Title className="sr-only">Command palette</Dialog.Title>
                 <Command
@@ -112,10 +113,19 @@ export function CommandPalette({ onNavigateToDocuments }: CommandPaletteProps) {
                         </StaggerRow>
                       </Command.Item>
                       <Command.Item
-                        onSelect={() => run(toggleTheme)}
+                        onSelect={() => run(onGoHome)}
                         className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-ink data-[selected=true]:bg-background cursor-pointer"
                       >
                         <StaggerRow i={2}>
+                          <Home size={15} className="text-accent" />
+                          Back to homepage
+                        </StaggerRow>
+                      </Command.Item>
+                      <Command.Item
+                        onSelect={() => run(toggleTheme)}
+                        className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-ink data-[selected=true]:bg-background cursor-pointer"
+                      >
+                        <StaggerRow i={3}>
                           {theme === 'dark' ? <Sun size={15} className="text-accent" /> : <Moon size={15} className="text-accent" />}
                           Switch to {theme === 'dark' ? 'light' : 'dark'} mode
                         </StaggerRow>
@@ -131,7 +141,7 @@ export function CommandPalette({ onNavigateToDocuments }: CommandPaletteProps) {
                             onSelect={() => run(() => selectConversation(c.id))}
                             className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-ink data-[selected=true]:bg-background cursor-pointer"
                           >
-                            <StaggerRow i={3 + i}>
+                            <StaggerRow i={4 + i}>
                               <MessageSquare size={15} className="shrink-0 text-ink-muted" />
                               <span className="truncate">{c.title}</span>
                             </StaggerRow>

@@ -143,7 +143,7 @@ Both paths share the same retrieval engine (`runRetrieval` in `rag.js`: expand �
 - A "Pipeline Trace" inspector on every answer — a vertical timeline of every stage the pipeline ran, with per-stage timing, a proportional duration bar, and stage-specific detail (the rewritten query, generated variants, retrieval hit counts, which candidates the reranker kept vs. dropped, the self-verification verdict) — turns the architecture diagram above into something you can click into per-query instead of only reading in server logs
 
 **Frontend**
-- Custom "Ledger" design system — a research-ledger/evidence-desk aesthetic (cool sage paper tones, verdigris + rust-sienna dual accents, Newsreader serif + Public Sans + JetBrains Mono) built deliberately away from the cream-and-one-accent look most AI-generated UIs default to; full light/dark theming with zero flash on load
+- Two design systems, deliberately kept separate: the landing page runs on "Ledger" — a research-ledger/evidence-desk aesthetic (cool sage paper tones, verdigris + rust-sienna dual accents, Newsreader serif + Public Sans + JetBrains Mono), full light/dark theming with zero flash on load. The main app view runs on "Signal" — a precision instrument-panel aesthetic built around the same core idea RAG retrieval itself is doing (finding signal in noisy candidates): a deep blue-black base, a phosphor-cyan/warm-amber dual accent, Instrument Serif + Hanken Grotesk, and a live waveform motif that recurs across the empty state, loading indicators, and composer. Both are built deliberately away from the cream-and-one-accent or near-black-and-acid-green look most AI-generated UIs default to. See `client/src/index.css`'s `.signal-theme` block for the full token set and the reasoning behind the split.
 - Citation badges styled as archive stamps (a signature element tied directly to the product's actual mechanic, not decoration) with spring-physics entrance animation
 - Command palette (Cmd/Ctrl+K) for quick navigation and conversation search, with staggered result entrance
 - Ambient animated background, staggered list/message entrance, page-transition choreography throughout via Framer Motion — all respecting `prefers-reduced-motion`
@@ -215,6 +215,10 @@ npm install
 npm run dev
 ```
 Open the printed local URL. The dev server proxies `/api/*` to the backend — no frontend env vars needed.
+
+> **Both at once (optional):** from the repo root, `npm run install:all` then `npm run dev` starts both server and client together in one terminal (color-coded output), using [`concurrently`](https://www.npmjs.com/package/concurrently). This is purely a convenience wrapper around steps 3-4 above — it still needs `server/.env` filled in first.
+>
+> **`ECONNREFUSED` / `http proxy error` in the client's terminal** almost always means the backend simply isn't running yet — the two dev servers are separate processes and the frontend's Vite proxy (see `client/vite.config.ts`) can't reach `localhost:5000` until `cd server && npm start` (or the combined `npm run dev` above) is actually up. Check that terminal for its own startup message/errors before assuming anything else is wrong.
 
 ## Configuration
 

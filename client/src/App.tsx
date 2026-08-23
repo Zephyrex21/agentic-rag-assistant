@@ -43,7 +43,7 @@ function AppContent() {
         </motion.div>
       ) : (
         <Suspense fallback={<LoadingFallback />}>
-          <MainAppView />
+          <MainAppView onGoHome={() => setView('hero')} />
         </Suspense>
       )}
     </AnimatePresence>

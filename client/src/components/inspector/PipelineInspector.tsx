@@ -299,7 +299,7 @@ export function PipelineInspectorTrigger({ trace }: { trace: PipelineTrace }) {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.15 }}
-                className="fixed inset-0 z-[100] bg-overlay"
+                className="signal-theme fixed inset-0 z-[100] bg-overlay"
               />
             </Dialog.Overlay>
             <Dialog.Content asChild aria-describedby={undefined}>
@@ -308,7 +308,7 @@ export function PipelineInspectorTrigger({ trace }: { trace: PipelineTrace }) {
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.96, y: -8 }}
                 transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                className="fixed left-1/2 top-[8vh] z-[101] max-h-[84vh] w-[92vw] max-w-xl -translate-x-1/2 overflow-y-auto rounded-2xl"
+                className="signal-theme font-signal-body fixed left-1/2 top-[8vh] z-[101] max-h-[84vh] w-[92vw] max-w-xl -translate-x-1/2 overflow-y-auto rounded-2xl"
               >
                 <div className="glass-panel rounded-2xl p-5">
                   <div className="mb-4 flex items-center justify-between">

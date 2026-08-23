@@ -9,6 +9,15 @@
 @import "@fontsource-variable/public-sans";
 @import "@fontsource-variable/jetbrains-mono";
 
+/* "Signal" theme faces (main app view only - see .signal-theme below):
+   Instrument Serif for headline/signature moments (a distinctive, slightly
+   eccentric high-contrast serif - ties to the "instrument panel" concept
+   by more than name alone, it has a precise, calibrated character) and
+   Hanken Grotesk for body/UI text (clean warm-neutral grotesque, legible
+   at small sizes, less overused than Inter/Space Grotesk). */
+@import "@fontsource/instrument-serif";
+@import "@fontsource-variable/hanken-grotesk";
+
 /*
   Design tokens - "Ledger": a research-ledger / evidence-desk aesthetic.
   Deliberately NOT the cream-paper-plus-warm-accent look most AI-generated
@@ -80,6 +89,114 @@
   --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.6), 0 8px 24px rgba(0, 0, 0, 0.34);
 }
 
+/*
+  "Signal" theme - the main app view's own design system (main app view
+  ONLY, per Zephyrex's scope decision; the Hero landing page stays on
+  Ledger above). Scoped under .signal-theme by redefining the SAME custom
+  property names :root/.dark already use - exactly the mechanism .dark
+  already relies on, so every existing bg-background/text-ink/etc. utility
+  class automatically repaints with these values inside the wrapper,
+  without touching each component's className individually.
+
+  Concept: a precision instrument panel at night - the AI "tuning in" to
+  find signal in noisy retrieval candidates (which is literally what RRF
+  fusion + reranking do). Deliberately a deep BLUE-black, not neutral/warm
+  black (the generic dark-mode default), with a considered DUAL accent
+  rather than a single acid-green/vermilion: a phosphor cyan for "locked
+  on" states (send, active, primary) and a warm amber for "calibration"
+  marks (citations, verified badges) - echoing an old oscilloscope trace
+  paired with a VU-meter needle glow.
+
+  Both light and dark variants exist, matching Ledger's own :root/.dark
+  pattern - .signal-theme below holds the LIGHT ("daylight instrument
+  panel") values, .dark .signal-theme overrides them for dark (a
+  descendant selector, not a compound one, since the .dark class lives on
+  <html> while .signal-theme lives on a nested wrapper - see
+  ThemeContext.tsx). The existing light/dark toggle now drives the main
+  app view too (see ThemeToggle's restoration in Sidebar.tsx).
+
+  Concept: a precision instrument panel - the AI "tuning in" to find
+  signal in noisy retrieval candidates (which is literally what RRF fusion
+  + reranking do). Dark mode is a deep BLUE-black, not neutral/warm black
+  (the generic dark-mode default); light mode is a cool pale slate, not
+  cream (the generic light-mode default). Both share a considered DUAL
+  accent rather than a single acid-green/vermilion: a signal teal/cyan for
+  "locked on" states (send, active, primary) and a warm amber for
+  "calibration" marks (citations, verified badges) - echoing an old
+  oscilloscope trace paired with a VU-meter needle glow.
+*/
+.signal-theme {
+  --bg: #f3f5f7;
+  --surface: #ffffff;
+  --surface-raised: #f7f9fa;
+  --ink: #12181f;
+  --ink-muted: #667080;
+  --accent: #0ea894;
+  --accent-2: #14c4ac;
+  --accent-ink: #f5fffd;
+  --highlight: #c97a2e;
+  --highlight-2: #e0954a;
+  --highlight-ink: #fff8ef;
+  --border-color: #dde2e7;
+  --border-subtle: #e7ebee;
+  --overlay: rgba(10, 14, 18, 0.45);
+  --glass: rgba(255, 255, 255, 0.86);
+  --glass-border: rgba(10, 14, 18, 0.07);
+  --shadow-xs: 0 1px 2px rgba(18, 24, 31, 0.06);
+  --shadow-sm: 0 1px 3px rgba(18, 24, 31, 0.08), 0 1px 2px rgba(18, 24, 31, 0.05);
+  --shadow-md: 0 4px 20px rgba(18, 24, 31, 0.1), 0 2px 8px rgba(18, 24, 31, 0.06);
+  --shadow-lg: 0 16px 40px rgba(18, 24, 31, 0.14), 0 4px 16px rgba(18, 24, 31, 0.08);
+  --shadow-xl: 0 28px 72px rgba(18, 24, 31, 0.18), 0 10px 28px rgba(18, 24, 31, 0.1);
+  color-scheme: light;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.dark .signal-theme {
+  --bg: #0b0f16;
+  --surface: #131a24;
+  --surface-raised: #1b2430;
+  --ink: #ede9e0;
+  --ink-muted: #8892a0;
+  --accent: #37e6c4;
+  --accent-2: #6ff5da;
+  --accent-ink: #06120e;
+  --highlight: #f2a65a;
+  --highlight-2: #ffc084;
+  --highlight-ink: #2a1706;
+  --border-color: #232d3b;
+  --border-subtle: #1a2330;
+  --overlay: rgba(4, 6, 10, 0.7);
+  --glass: rgba(19, 26, 36, 0.9);
+  --glass-border: rgba(255, 255, 255, 0.07);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.32);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.58), 0 4px 16px rgba(0, 0, 0, 0.36);
+  --shadow-xl: 0 28px 72px rgba(0, 0, 0, 0.68), 0 10px 28px rgba(0, 0, 0, 0.4);
+  color-scheme: dark;
+}
+
+/* A live horizontal waveform - the one signature element the whole Signal
+   view is built around (see EmptyState/Composer/loading states). Three
+   staggered bars pulsing at slightly different rates so it reads as a
+   real signal, not a uniform mechanical blink. */
+@keyframes signal-pulse-1 { 0%, 100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }
+@keyframes signal-pulse-2 { 0%, 100% { transform: scaleY(0.5); } 50% { transform: scaleY(0.85); } }
+@keyframes signal-pulse-3 { 0%, 100% { transform: scaleY(0.35); } 50% { transform: scaleY(1); } }
+@keyframes signal-scan {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+@keyframes signal-glow-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .signal-bar { animation: none !important; }
+  .signal-scanline { animation: none !important; }
+}
+
 @theme inline {
   --color-background: var(--bg);
   --color-surface: var(--surface);
@@ -109,6 +226,13 @@
   --font-sans: "Public Sans Variable", -apple-system, BlinkMacSystemFont, "Segoe UI Variable", system-ui, sans-serif;
   --font-serif: "Newsreader Variable", ui-serif, Georgia, serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", monospace;
+
+  /* Signal-only faces - kept as separate tokens (not overriding --font-sans/
+     --font-serif above) so Hero's Ledger typography is untouched. Used via
+     font-signal-display / font-signal-body utility classes within
+     .signal-theme-scoped components only. */
+  --font-signal-display: "Instrument Serif", ui-serif, Georgia, serif;
+  --font-signal-body: "Hanken Grotesk Variable", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 }
 
 /* Ambient background drift - two large, very soft blobs slowly wandering

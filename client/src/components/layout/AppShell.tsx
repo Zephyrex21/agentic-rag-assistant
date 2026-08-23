@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Menu, X } from 'lucide-react';
+import { LogoMark } from '../LogoMark';
 
 interface AppShellProps {
   sidebar: ReactNode;
@@ -11,12 +12,23 @@ export function AppShell({ sidebar, main }: AppShellProps) {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   return (
-    <div className="relative flex h-svh w-full overflow-hidden">
+    <div className="relative flex h-svh w-full overflow-hidden bg-background text-ink">
+      {/* A single hairline scanline that quietly sweeps the full width once
+          every ~8s - the signature "signal" motif reduced to its most
+          ambient form, present at the shell level so it reads as part of
+          the instrument's own idle behavior rather than a loading state. */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-[60] h-px overflow-hidden opacity-40">
+        <div
+          className="signal-scanline h-full w-1/3"
+          style={{
+            background: 'linear-gradient(90deg, transparent, var(--accent), transparent)',
+            animation: 'signal-scan 8s linear infinite',
+          }}
+        />
+      </div>
+
       {/* Desktop sidebar - always visible, static */}
-      <aside
-        className="hidden w-80 shrink-0 border-r border-border-subtle md:block"
-        style={{ boxShadow: '2px 0 12px -4px rgba(22,22,26,0.03)' }}
-      >
+      <aside className="hidden w-[19rem] shrink-0 border-r border-border md:block" style={{ boxShadow: 'var(--shadow-lg)' }}>
         {sidebar}
       </aside>
 
@@ -42,7 +54,7 @@ export function AppShell({ sidebar, main }: AppShellProps) {
                 type="button"
                 onClick={() => setMobileSidebarOpen(false)}
                 aria-label="Close menu"
-                className="absolute right-3 top-5 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-surface-raised text-ink cursor-pointer"
+                className="absolute right-3 top-5 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface-raised text-ink cursor-pointer"
               >
                 <X size={16} />
               </button>
@@ -54,7 +66,7 @@ export function AppShell({ sidebar, main }: AppShellProps) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Mobile top bar */}
-        <div className="flex items-center gap-3 border-b border-border px-4 py-3 md:hidden">
+        <div className="flex items-center gap-3 border-b border-border bg-surface px-4 py-3 md:hidden">
           <button
             type="button"
             onClick={() => setMobileSidebarOpen(true)}
@@ -63,9 +75,8 @@ export function AppShell({ sidebar, main }: AppShellProps) {
           >
             <Menu size={16} />
           </button>
-          <span className="font-mono text-xs uppercase tracking-[0.2em] text-ink-muted">
-            RAG Assistant
-          </span>
+          <LogoMark size={18} />
+          <span className="font-mono text-[11px] uppercase tracking-[0.25em] text-ink-muted">Signal</span>
         </div>
 
         <div className="min-h-0 flex-1">{main}</div>

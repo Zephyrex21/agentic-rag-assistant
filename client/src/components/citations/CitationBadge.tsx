@@ -32,9 +32,10 @@ export function CitationBadge({ source, animate = true }: { source: Source | und
           className="mx-0.5 inline-flex h-5 min-w-5 translate-y-[-1px] items-center justify-center px-1.5 font-mono text-[10px] font-semibold cursor-pointer"
           style={{
             borderRadius: '3px',
-            background: 'color-mix(in srgb, var(--highlight) 10%, transparent)',
+            background: 'color-mix(in srgb, var(--highlight) 14%, transparent)',
             border: '1px solid color-mix(in srgb, var(--highlight) 55%, transparent)',
             color: 'var(--highlight)',
+            boxShadow: '0 0 8px -2px color-mix(in srgb, var(--highlight) 60%, transparent)',
           }}
         >
           {source.sourceNumber}

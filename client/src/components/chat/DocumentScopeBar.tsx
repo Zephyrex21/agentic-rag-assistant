@@ -24,8 +24,8 @@ export function DocumentScopeBar() {
 
   return (
     <div
-      className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle bg-surface px-4 py-2.5 sm:px-6"
-      style={{ boxShadow: '0 8px 24px -16px rgba(22,22,26,0.08)' }}
+      className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface px-4 py-2.5 sm:px-6"
+      style={{ boxShadow: 'var(--shadow-sm)' }}
     >
       <div className="flex flex-wrap items-center gap-1.5">
       {scopedDocs.length === 0 ? (
@@ -69,7 +69,7 @@ export function DocumentScopeBar() {
               initial={{ opacity: 0, scale: 0.96, y: -4 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               transition={{ duration: 0.15 }}
-              className="glass-panel w-72 rounded-2xl p-3 shadow-2xl"
+              className="signal-theme font-signal-body glass-panel w-72 rounded-2xl p-3 shadow-2xl"
             >
               <p className="px-1 pb-2 text-xs font-medium text-ink-muted">
                 Search only these documents

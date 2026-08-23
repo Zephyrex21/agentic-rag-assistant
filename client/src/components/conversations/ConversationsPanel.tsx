@@ -107,11 +107,24 @@ function ConversationRow({
       <button
         type="button"
         onClick={onSelect}
-        className={`group flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm transition-all duration-200 cursor-pointer ${
-          active ? 'bg-background text-ink shadow-sm' : 'text-ink-muted hover:bg-background/60'
+        className={`group relative flex w-full items-center gap-2 overflow-hidden rounded-xl px-2.5 py-2 text-left text-sm transition-all duration-200 cursor-pointer ${
+          active ? 'bg-surface-raised text-ink' : 'text-ink-muted hover:bg-surface-raised/60'
         }`}
+        style={
+          active
+            ? { boxShadow: '0 0 0 1px var(--border-color), 0 0 16px -6px color-mix(in srgb, var(--accent) 60%, transparent)' }
+            : undefined
+        }
       >
-        <MessageSquare size={14} className="shrink-0" />
+        {active && (
+          <motion.span
+            layoutId="conversation-active-rail"
+            className="absolute inset-y-1.5 left-0 w-[3px] rounded-full"
+            style={{ background: 'var(--accent)', boxShadow: '0 0 8px 1px var(--accent)' }}
+            transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+          />
+        )}
+        <MessageSquare size={14} className={`shrink-0 ${active ? 'text-accent' : ''}`} />
         <span className="min-w-0 flex-1 truncate">{title}</span>
         {confirming ? (
           <span className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>

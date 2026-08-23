@@ -1,8 +1,8 @@
 import { type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageSquare, FileText } from 'lucide-react';
-import { ThemeToggle } from '../ThemeToggle';
+import { MessageSquare, FileText, Home } from 'lucide-react';
 import { LogoMark } from '../LogoMark';
+import { ThemeToggle } from '../ThemeToggle';
 
 export type SidebarTab = 'chats' | 'documents';
 
@@ -12,27 +12,42 @@ interface SidebarProps {
   newConversationSlot: ReactNode;
   tab: SidebarTab;
   onTabChange: (tab: SidebarTab) => void;
+  onGoHome: () => void;
 }
 
-export function Sidebar({ chatsSlot, documentsSlot, newConversationSlot, tab, onTabChange }: SidebarProps) {
+export function Sidebar({ chatsSlot, documentsSlot, newConversationSlot, tab, onTabChange, onGoHome }: SidebarProps) {
   return (
     <div className="flex h-full w-full flex-col bg-surface">
       <div className="flex items-center justify-between px-5 pt-5">
-        <span className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.2em] text-ink-muted">
-          <LogoMark size={16} />
-          RAG Assistant
+        <span className="flex items-center gap-2.5">
+          <LogoMark size={19} />
+          <span className="font-signal-display text-[19px] italic leading-none text-ink">Signal</span>
         </span>
-        <div className="flex items-center gap-2">
-          <kbd className="hidden items-center gap-0.5 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-ink-muted sm:flex">
-            <span>⌘</span>K
-          </kbd>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onGoHome}
+            aria-label="Back to homepage"
+            title="Back to homepage"
+            className="flex h-7 w-7 items-center justify-center rounded-full border border-border text-ink-muted transition-colors hover:border-accent hover:text-accent cursor-pointer"
+          >
+            <Home size={13} />
+          </button>
           <ThemeToggle />
         </div>
+      </div>
+      <div className="mt-1 flex items-center justify-between px-5">
+        <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-ink-muted">
+          Grounded document intelligence
+        </p>
+        <kbd className="hidden items-center gap-0.5 rounded-md border border-border bg-background px-1.5 py-1 font-mono text-[10px] text-ink-muted sm:flex">
+          <span>⌘</span>K
+        </kbd>
       </div>
 
       <div className="px-5 pt-4">{newConversationSlot}</div>
 
-      <div className="mt-4 flex gap-0.5 rounded-xl bg-background p-1 mx-5" style={{ width: 'calc(100% - 2.5rem)' }}>
+      <div className="mx-5 mt-4 flex gap-0.5 rounded-xl border border-border-subtle bg-background p-1" style={{ width: 'calc(100% - 2.5rem)' }}>
         <TabButton active={tab === 'chats'} onClick={() => onTabChange('chats')} icon={<MessageSquare size={14} />}>
           Chats
         </TabButton>
@@ -78,11 +93,12 @@ function TabButton({
       {active && (
         <motion.div
           layoutId="sidebar-tab-active"
-          className="absolute inset-0 rounded-lg bg-surface shadow-sm"
+          className="absolute inset-0 rounded-lg bg-surface-raised shadow-sm"
+          style={{ boxShadow: '0 0 0 1px var(--border-color), 0 0 12px -2px color-mix(in srgb, var(--accent) 35%, transparent)' }}
           transition={{ type: 'spring', stiffness: 400, damping: 30 }}
         />
       )}
-      <span className={`relative z-10 flex items-center gap-1.5 ${active ? 'text-ink' : 'text-ink-muted'}`}>
+      <span className={`relative z-10 flex items-center gap-1.5 ${active ? 'text-accent' : 'text-ink-muted'}`}>
         {icon}
         {children}
       </span>

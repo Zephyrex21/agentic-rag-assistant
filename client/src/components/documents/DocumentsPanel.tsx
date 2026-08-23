@@ -2,10 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as Popover from '@radix-ui/react-popover';
 import {
-  FileText,
   Loader2,
-  CheckCircle2,
-  AlertCircle,
   Trash2,
   Upload,
   Search,
@@ -76,9 +73,10 @@ export function DocumentsPanel() {
           handleFiles(e.dataTransfer.files);
         }}
         onClick={() => inputRef.current?.click()}
-        className={`flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors ${
-          dragActive ? 'border-accent bg-accent/5' : 'border-border hover:border-ink-muted'
+        className={`flex cursor-pointer flex-col items-center gap-2 rounded-xl border px-4 py-6 text-center transition-all duration-200 ${
+          dragActive ? 'border-accent bg-accent/8' : 'border-dashed border-border hover:border-ink-muted'
         }`}
+        style={dragActive ? { boxShadow: '0 0 0 1px var(--accent), 0 0 20px -4px color-mix(in srgb, var(--accent) 60%, transparent)' } : undefined}
       >
         <Upload size={18} className={dragActive ? 'text-accent' : 'text-ink-muted'} />
         <p className="text-xs text-ink-muted">
@@ -321,9 +319,9 @@ function DocumentRow({
       animate={{ opacity: 1, height: 'auto', x: 0 }}
       exit={{ opacity: 0, height: 0 }}
       transition={{ duration: 0.24, delay, ease: [0.16, 1, 0.3, 1] }}
-      className="elevation-hover group flex items-center gap-2.5 rounded-xl px-2.5 py-2 hover:bg-background"
+      className="group flex items-center gap-2.5 rounded-xl border border-transparent px-2.5 py-2 transition-colors duration-200 hover:border-border-subtle hover:bg-surface-raised"
     >
-      <FileText size={15} className="shrink-0 text-ink-muted" />
+      <StatusDot status={doc.status} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm text-ink">{doc.filename}</p>
         <StatusLine doc={doc} />
@@ -344,7 +342,7 @@ function DocumentRow({
             </button>
           </Popover.Trigger>
           <Popover.Portal>
-            <Popover.Content side="bottom" align="end" sideOffset={6} className="z-50">
+            <Popover.Content side="bottom" align="end" sideOffset={6} className="signal-theme font-signal-body z-50">
               <motion.div
                 initial={{ opacity: 0, scale: 0.96, y: -4 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -415,15 +413,40 @@ function DocumentRow({
   );
 }
 
+function StatusDot({ status }: { status: DocumentSummary['status'] }) {
+  if (status === 'processing') {
+    return (
+      <span className="relative flex h-6 w-6 shrink-0 items-center justify-center">
+        <Loader2 size={14} className="animate-spin text-ink-muted" />
+      </span>
+    );
+  }
+  if (status === 'failed') {
+    return (
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center">
+        <span
+          className="h-2 w-2 rounded-full"
+          style={{ background: 'var(--highlight)', boxShadow: '0 0 6px 1px color-mix(in srgb, var(--highlight) 70%, transparent)' }}
+        />
+      </span>
+    );
+  }
+  // ready - a small "locked on" LED, matching the accent's signal glow
+  return (
+    <span className="flex h-6 w-6 shrink-0 items-center justify-center">
+      <span
+        className="h-2 w-2 rounded-full"
+        style={{ background: 'var(--accent)', boxShadow: '0 0 6px 1px color-mix(in srgb, var(--accent) 70%, transparent)' }}
+      />
+    </span>
+  );
+}
+
 function StatusLine({ doc }: { doc: DocumentSummary }) {
   const [expanded, setExpanded] = useState(false);
 
   if (doc.status === 'processing') {
-    return (
-      <p className="flex items-center gap-1 text-[11px] text-ink-muted">
-        <Loader2 size={10} className="animate-spin" /> Processing...
-      </p>
-    );
+    return <p className="text-[11px] text-ink-muted">Processing...</p>;
   }
   if (doc.status === 'failed') {
     return (
@@ -434,17 +457,13 @@ function StatusLine({ doc }: { doc: DocumentSummary }) {
             e.stopPropagation();
             if (doc.error) setExpanded((v) => !v);
           }}
-          className={`flex items-center gap-1 text-[11px] text-highlight ${doc.error ? 'cursor-pointer hover:underline' : ''}`}
+          className={`text-[11px] text-highlight ${doc.error ? 'cursor-pointer hover:underline' : ''}`}
         >
-          <AlertCircle size={10} /> Failed{doc.error ? ' - tap for details' : ''}
+          Failed{doc.error ? ' - tap for details' : ''}
         </button>
         {expanded && doc.error && <p className="mt-1 text-[11px] text-ink-muted">{doc.error}</p>}
       </div>
     );
   }
-  return (
-    <p className="flex items-center gap-1 text-[11px] text-ink-muted">
-      <CheckCircle2 size={10} className="text-accent" /> {doc.chunkCount} chunks
-    </p>
-  );
+  return <p className="font-mono text-[11px] text-ink-muted">{doc.chunkCount} chunks</p>;
 }

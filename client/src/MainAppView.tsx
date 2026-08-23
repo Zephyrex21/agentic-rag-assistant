@@ -18,17 +18,27 @@ import { CommandPalette } from './components/command/CommandPalette';
  * React.lazy(); this file being its own module is what makes that split
  * actually happen at the bundler level.
  */
-export default function MainAppView() {
+interface MainAppViewProps {
+  onGoHome: () => void;
+}
+
+export default function MainAppView({ onGoHome }: MainAppViewProps) {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('chats');
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }} className="h-svh">
-      <CommandPalette onNavigateToDocuments={() => setSidebarTab('documents')} />
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.4 }}
+      className="signal-theme h-svh font-signal-body"
+    >
+      <CommandPalette onNavigateToDocuments={() => setSidebarTab('documents')} onGoHome={onGoHome} />
       <AppShell
         sidebar={
           <Sidebar
             tab={sidebarTab}
             onTabChange={setSidebarTab}
+            onGoHome={onGoHome}
             newConversationSlot={<NewConversationButton />}
             chatsSlot={<ConversationsPanel />}
             documentsSlot={<DocumentsPanel />}
