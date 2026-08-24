@@ -10,6 +10,7 @@ import {
   FolderPlus,
   Plus,
   Check,
+  AlertTriangle,
 } from 'lucide-react';
 import { useDocuments } from '../../context/DocumentsContext';
 import { DocumentRowSkeleton } from '../ui/Skeleton';
@@ -23,7 +24,7 @@ const SEARCH_THRESHOLD = 6;
 type FolderFilter = 'all' | 'uncategorized' | string;
 
 export function DocumentsPanel() {
-  const { documents, loading, uploadError, upload, remove, folders, createFolder, deleteFolder, moveToFolder } =
+  const { documents, loading, loadError, uploadError, upload, remove, folders, createFolder, deleteFolder, moveToFolder } =
     useDocuments();
   const [dragActive, setDragActive] = useState(false);
   const [query, setQuery] = useState('');
@@ -97,6 +98,16 @@ export function DocumentsPanel() {
         <p className="rounded-lg bg-highlight/10 px-3 py-2 text-xs text-highlight">{uploadError}</p>
       )}
 
+      {loadError && (
+        <div
+          className="flex items-start gap-2 rounded-lg px-3 py-2 text-xs text-highlight"
+          style={{ background: 'color-mix(in srgb, var(--highlight) 8%, transparent)' }}
+        >
+          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+          <span>{loadError}</span>
+        </div>
+      )}
+
       <FolderChips
         folders={folders}
         active={activeFolder}
@@ -128,7 +139,7 @@ export function DocumentsPanel() {
             <DocumentRowSkeleton />
           </>
         )}
-        {!loading && documents.length === 0 && (
+        {!loading && !loadError && documents.length === 0 && (
           <p className="px-1 text-xs text-ink-muted">No documents yet. Upload one to get started.</p>
         )}
         {!loading && documents.length > 0 && byFolder.length === 0 && (

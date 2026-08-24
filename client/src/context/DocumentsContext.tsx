@@ -18,6 +18,7 @@ import {
   moveDocumentToFolder,
   uploadDocument,
 } from '../lib/api';
+import { withRetry } from '../lib/retry';
 import type { DocumentSummary, Folder } from '../lib/types';
 
 const POLL_INTERVAL_MS = 2000;
@@ -25,6 +26,7 @@ const POLL_INTERVAL_MS = 2000;
 interface DocumentsContextValue {
   documents: DocumentSummary[];
   loading: boolean;
+  loadError: string | null;
   uploadError: string | null;
   upload: (file: File, folderId?: string | null) => Promise<void>;
   remove: (documentId: string) => Promise<void>;
@@ -40,6 +42,7 @@ const DocumentsContext = createContext<DocumentsContextValue | undefined>(undefi
 export function DocumentsProvider({ children }: { children: ReactNode }) {
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [foldersLoading, setFoldersLoading] = useState(true);
@@ -50,9 +53,21 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
   foldersRef.current = folders;
 
   useEffect(() => {
-    listDocuments()
+    // One retry after a short delay - smooths over the local-dev startup
+    // race where the client's first request can land before the backend
+    // has finished binding to its port (see lib/retry.ts). A genuine
+    // config problem (missing Supabase credentials, wrong URL, etc.)
+    // still surfaces clearly via loadError below - this isn't hiding that,
+    // just not treating one transient miss as a hard failure.
+    withRetry(listDocuments)
       .then(({ documents }) => setDocuments(documents))
-      .catch(() => {})
+      .catch((err) => {
+        setLoadError(
+          err instanceof Error
+            ? `Couldn't load your documents: ${err.message}`
+            : "Couldn't load your documents - is the backend server running?"
+        );
+      })
       .finally(() => setLoading(false));
 
     // Folders are an optional layer - if the migration hasn't been run yet
@@ -186,6 +201,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
       value={{
         documents,
         loading,
+        loadError,
         uploadError,
         upload,
         remove,

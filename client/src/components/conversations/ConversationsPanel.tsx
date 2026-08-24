@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageSquare, Trash2, Search } from 'lucide-react';
+import { MessageSquare, Trash2, Search, AlertTriangle } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useConversations } from '../../context/ConversationsContext';
 import { ConversationRowSkeleton } from '../ui/Skeleton';
@@ -12,6 +12,7 @@ export function ConversationsPanel() {
   const {
     conversations,
     conversationsLoading,
+    loadError,
     activeConversationId,
     selectConversation,
     deleteConversation,
@@ -38,6 +39,19 @@ export function ConversationsPanel() {
         <ConversationRowSkeleton />
         <ConversationRowSkeleton />
         <ConversationRowSkeleton />
+      </div>
+    );
+  }
+
+  // A real load failure (backend unreachable, misconfigured) is visually
+  // distinct from "you genuinely have zero conversations" - the two used
+  // to look identical, silently, which is exactly what made a local dev
+  // startup race or a missing .env look like "nothing happened."
+  if (loadError) {
+    return (
+      <div className="flex items-start gap-2 rounded-lg px-2 py-2 text-xs text-highlight" style={{ background: 'color-mix(in srgb, var(--highlight) 8%, transparent)' }}>
+        <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+        <span>{loadError}</span>
       </div>
     );
   }

@@ -14,11 +14,13 @@ import {
   listConversations,
   sendMessageStream,
 } from '../lib/api';
+import { withRetry } from '../lib/retry';
 import type { ConversationDetail, ConversationSummary, Message } from '../lib/types';
 
 interface ConversationsContextValue {
   conversations: ConversationSummary[];
   conversationsLoading: boolean;
+  loadError: string | null;
   // True once the initial load has been pending long enough that it's
   // probably a Render free-tier cold start (the backend spins down after
   // inactivity and can take up to ~a minute to wake back up), not just a
@@ -68,6 +70,7 @@ function makeId() {
 export function ConversationsProvider({ children }: { children: ReactNode }) {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isColdStarting, setIsColdStarting] = useState(false);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [activeConversation, setActiveConversation] = useState<ConversationDetail | null>(null);
@@ -80,19 +83,31 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
   // beats hoping the stale-document problem never comes up again.
   const [scopeByConversation, setScopeByConversation] = useState<Record<string, string[]>>({});
 
-  const refreshList = useCallback(async () => {
+  const refreshList = useCallback(async (isInitial = false) => {
     try {
-      const { conversations } = await listConversations();
+      // Only the initial (mount-time) call retries and surfaces a load
+      // error - see lib/retry.ts. A later refresh (e.g. after sending a
+      // message) staying silent-and-keep-the-existing-list on failure is
+      // correct as-is; the person already has something on screen by then.
+      const { conversations } = await (isInitial ? withRetry(listConversations) : listConversations());
       setConversations(conversations);
-    } catch {
-      // Non-fatal - keep whatever list we already have
+      if (isInitial) setLoadError(null);
+    } catch (err) {
+      if (isInitial) {
+        setLoadError(
+          err instanceof Error
+            ? `Couldn't load your conversations: ${err.message}`
+            : "Couldn't load your conversations - is the backend server running?"
+        );
+      }
+      // else: Non-fatal - keep whatever list we already have
     } finally {
       setConversationsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    refreshList();
+    refreshList(true);
   }, [refreshList]);
 
   // Only meaningfully runs once: conversationsLoading starts true for the
@@ -348,6 +363,7 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
       value={{
         conversations,
         conversationsLoading,
+        loadError,
         isColdStarting,
         activeConversationId,
         activeConversation,
