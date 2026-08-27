@@ -41,7 +41,17 @@ function makeDotTexture(): THREE.Texture {
  * accent and troughs fade toward the background - letting Bloom pick out
  * just the peaks.
  */
-function Terrain({ accent, bg, reduceMotion }: { accent: THREE.Color; bg: THREE.Color; reduceMotion: boolean }) {
+function Terrain({
+  accent,
+  bg,
+  reduceMotion,
+  isDark,
+}: {
+  accent: THREE.Color;
+  bg: THREE.Color;
+  reduceMotion: boolean;
+  isDark: boolean;
+}) {
   const geoRef = useRef<THREE.PlaneGeometry>(null);
   const basePositions = useRef<Float32Array | null>(null);
 
@@ -63,20 +73,21 @@ function Terrain({ accent, bg, reduceMotion }: { accent: THREE.Color; bg: THREE.
 
     // Dim/bright endpoints computed once per frame (not per-vertex) to
     // avoid allocating THREE.Color objects inside the hot loop below.
-    // Deliberately a NARROW, muted range (max ~30% accent even at wave
-    // peaks) rather than reaching full accent - this mesh is meant to
-    // read as a barely-there texture in the background, not a bold grid.
-    // The same narrow range is what keeps it looking right in BOTH themes:
-    // dark Ledger's accent (#2ed9b3) has high green/blue channels on its
-    // own, so blending it in at full strength read as near-white once
-    // wireframe overdraw and Bloom stacked on top - a muted ceiling avoids
-    // that regardless of which theme's accent is active.
-    const dimR = bg.r + (accent.r - bg.r) * 0.04;
-    const dimG = bg.g + (accent.g - bg.g) * 0.04;
-    const dimB = bg.b + (accent.b - bg.b) * 0.04;
-    const peakR = bg.r + (accent.r - bg.r) * 0.3;
-    const peakG = bg.g + (accent.g - bg.g) * 0.3;
-    const peakB = bg.b + (accent.b - bg.b) * 0.3;
+    // Deliberately DIFFERENT ranges per theme, not one universal formula:
+    // dark Ledger's accent (#2ed9b3) has high green/blue channels and a
+    // high raw luminance on its own, so blending it in at the same
+    // strength that looks right in light mode reads as near-white once
+    // wireframe overdraw and Bloom stack on top. Light Ledger's accent
+    // (#0e6b57) is a much darker, lower-luminance teal that can take a
+    // full-strength blend without ever washing out the same way.
+    const dimMix = isDark ? 0.07 : 0.22;
+    const peakMix = isDark ? 0.42 : 1.0;
+    const dimR = bg.r + (accent.r - bg.r) * dimMix;
+    const dimG = bg.g + (accent.g - bg.g) * dimMix;
+    const dimB = bg.b + (accent.b - bg.b) * dimMix;
+    const peakR = bg.r + (accent.r - bg.r) * peakMix;
+    const peakG = bg.g + (accent.g - bg.g) * peakMix;
+    const peakB = bg.b + (accent.b - bg.b) * peakMix;
 
     for (let i = 0; i < posAttr.count; i++) {
       const ix = i * 3;
@@ -100,7 +111,9 @@ function Terrain({ accent, bg, reduceMotion }: { accent: THREE.Color; bg: THREE.
           edge is never what fades it out - fog handles that well before
           the geometry boundary would otherwise show as a hard border. */}
       <planeGeometry ref={geoRef} args={[70, 50, 44, 44]} />
-      <meshBasicMaterial vertexColors wireframe transparent opacity={0.16} />
+      {/* Opacity also differs per theme for the same reason the color mix
+          does - dark mode needs to stay lower to avoid washing out. */}
+      <meshBasicMaterial vertexColors wireframe transparent opacity={isDark ? 0.3 : 0.5} />
     </mesh>
   );
 }
@@ -163,11 +176,13 @@ function ParticleField({
   highlight,
   bg,
   reduceMotion,
+  isDark,
 }: {
   accent: THREE.Color;
   highlight: THREE.Color;
   bg: THREE.Color;
   reduceMotion: boolean;
+  isDark: boolean;
 }) {
   const pointsRef = useRef<THREE.Points>(null);
   const dotTexture = useMemo(() => makeDotTexture(), []);
@@ -257,14 +272,17 @@ function ParticleField({
     groups.forEach((idxs, g) => {
       const a = groupActivity.current[g];
       idxs.forEach((idx) => {
-        // Idle particles sit much closer to the background (0.08) than
-        // before - the "document field" should read as barely-there
-        // texture until a group actually locks on, at which point it
-        // still climbs to a clearly-visible peak (0.9) so the signal-lock
-        // moment reads as a genuine event against the muted field.
-        colorAttr[idx * 3] = bg.r + (groupColorRefs[g].r - bg.r) * (0.08 + a * 0.82);
-        colorAttr[idx * 3 + 1] = bg.g + (groupColorRefs[g].g - bg.g) * (0.08 + a * 0.82);
-        colorAttr[idx * 3 + 2] = bg.b + (groupColorRefs[g].b - bg.b) * (0.08 + a * 0.82);
+        // Idle mix is theme-aware for the same reason Terrain's is - dark
+        // mode's brighter accent needs a lower floor to read as "barely
+        // there" rather than washing out; light mode's darker accent can
+        // sit higher (closer to the original look) without that risk.
+        // The signal-lock peak (a=1) stays strong either way so the
+        // "lock" moment always reads as a clear event.
+        const idleMix = isDark ? 0.06 : 0.16;
+        const peakMix = isDark ? 0.82 : 0.84;
+        colorAttr[idx * 3] = bg.r + (groupColorRefs[g].r - bg.r) * (idleMix + a * peakMix);
+        colorAttr[idx * 3 + 1] = bg.g + (groupColorRefs[g].g - bg.g) * (idleMix + a * peakMix);
+        colorAttr[idx * 3 + 2] = bg.b + (groupColorRefs[g].b - bg.b) * (idleMix + a * peakMix);
       });
     });
 
@@ -319,7 +337,7 @@ function CameraRig({ reduceMotion }: { reduceMotion: boolean }) {
 }
 
 export function SignalFieldScene({ reduceMotion, paused }: { reduceMotion: boolean; paused: boolean }) {
-  const { accent, highlight, bg } = useThemeColors();
+  const { accent, highlight, bg, isDark } = useThemeColors();
 
   return (
     <Canvas
@@ -329,8 +347,8 @@ export function SignalFieldScene({ reduceMotion, paused }: { reduceMotion: boole
       frameloop={paused ? 'never' : 'always'}
     >
       <fog attach="fog" args={[bg, 5, 13]} />
-      <Terrain accent={accent} bg={bg} reduceMotion={reduceMotion} />
-      <ParticleField accent={accent} highlight={highlight} bg={bg} reduceMotion={reduceMotion} />
+      <Terrain accent={accent} bg={bg} reduceMotion={reduceMotion} isDark={isDark} />
+      <ParticleField accent={accent} highlight={highlight} bg={bg} reduceMotion={reduceMotion} isDark={isDark} />
       <CameraRig reduceMotion={reduceMotion} />
       <EffectComposer>
         {/* A high threshold + modest intensity on purpose: only a

@@ -5,8 +5,9 @@ function readColors() {
   if (typeof window === 'undefined') {
     // SSR/test-environment guard - arbitrary but valid colors, never
     // actually rendered in that context.
-    return { accent: new THREE.Color('#2ed9b3'), highlight: new THREE.Color('#ff7a47'), bg: new THREE.Color('#0b0f16') };
+    return { accent: new THREE.Color('#2ed9b3'), highlight: new THREE.Color('#ff7a47'), bg: new THREE.Color('#0b0f16'), isDark: true };
   }
+  const isDark = document.documentElement.classList.contains('dark');
   const styles = getComputedStyle(document.documentElement);
   const read = (varName: string, fallback: string) => {
     const value = styles.getPropertyValue(varName).trim();
@@ -16,6 +17,7 @@ function readColors() {
     accent: read('--accent', '#2ed9b3'),
     highlight: read('--highlight', '#ff7a47'),
     bg: read('--bg', '#0b0f16'),
+    isDark,
   };
 }
 
