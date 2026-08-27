@@ -3,7 +3,6 @@ import { useEffect } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { ThemeToggle } from '../ThemeToggle';
 import { LogoMark } from '../LogoMark';
-import { useTheme } from '../../context/ThemeContext';
 import { SignalBackground } from './signal-field/SignalBackground';
 
 const container: Variants = {
@@ -58,7 +57,6 @@ function FloatingStamp({
 
 export function Hero({ onEnter }: { onEnter: () => void }) {
   const reduceMotion = useReducedMotion();
-  const { theme } = useTheme();
 
   // Cursor-parallax on the ambient orb - subtle depth cue, disabled
   // entirely under reduced-motion rather than just skipping the spring.
@@ -86,7 +84,7 @@ export function Hero({ onEnter }: { onEnter: () => void }) {
           or any runtime error. Hero-only, deliberately - see
           signal-field/SignalFieldScene.tsx's header comment. */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <SignalBackground theme={theme} reduceMotion={Boolean(reduceMotion)} orbX={orbX} orbY={orbY} />
+        <SignalBackground reduceMotion={Boolean(reduceMotion)} orbX={orbX} orbY={orbY} />
         {/* Inverse vignette - fades the 3D scene's density right behind the
             headline/CTA specifically, so the richest part of the visual
             sits at the edges while the text stays on a calm, legible

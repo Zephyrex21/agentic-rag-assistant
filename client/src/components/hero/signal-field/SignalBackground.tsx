@@ -50,12 +50,10 @@ function GradientOrbFallback({
  * whenever the tab isn't visible.
  */
 export function SignalBackground({
-  theme,
   reduceMotion,
   orbX,
   orbY,
 }: {
-  theme: 'light' | 'dark';
   reduceMotion: boolean;
   orbX: MotionValue<string> | number;
   orbY: MotionValue<string> | number;
@@ -82,7 +80,7 @@ export function SignalBackground({
   return (
     <SceneErrorBoundary fallback={fallback}>
       <Suspense fallback={fallback}>
-        <SignalFieldScene theme={theme} reduceMotion={reduceMotion} paused={hidden} />
+        <SignalFieldScene reduceMotion={reduceMotion} paused={hidden} />
       </Suspense>
     </SceneErrorBoundary>
   );

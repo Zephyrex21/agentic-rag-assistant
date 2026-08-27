@@ -63,9 +63,20 @@ function Terrain({ accent, bg, reduceMotion }: { accent: THREE.Color; bg: THREE.
 
     // Dim/bright endpoints computed once per frame (not per-vertex) to
     // avoid allocating THREE.Color objects inside the hot loop below.
-    const dimR = bg.r + (accent.r - bg.r) * 0.22;
-    const dimG = bg.g + (accent.g - bg.g) * 0.22;
-    const dimB = bg.b + (accent.b - bg.b) * 0.22;
+    // Deliberately a NARROW, muted range (max ~30% accent even at wave
+    // peaks) rather than reaching full accent - this mesh is meant to
+    // read as a barely-there texture in the background, not a bold grid.
+    // The same narrow range is what keeps it looking right in BOTH themes:
+    // dark Ledger's accent (#2ed9b3) has high green/blue channels on its
+    // own, so blending it in at full strength read as near-white once
+    // wireframe overdraw and Bloom stacked on top - a muted ceiling avoids
+    // that regardless of which theme's accent is active.
+    const dimR = bg.r + (accent.r - bg.r) * 0.04;
+    const dimG = bg.g + (accent.g - bg.g) * 0.04;
+    const dimB = bg.b + (accent.b - bg.b) * 0.04;
+    const peakR = bg.r + (accent.r - bg.r) * 0.3;
+    const peakG = bg.g + (accent.g - bg.g) * 0.3;
+    const peakB = bg.b + (accent.b - bg.b) * 0.3;
 
     for (let i = 0; i < posAttr.count; i++) {
       const ix = i * 3;
@@ -76,16 +87,20 @@ function Terrain({ accent, bg, reduceMotion }: { accent: THREE.Color; bg: THREE.
       posAttr.setZ(i, wave * 0.85);
 
       const e = Math.max(0, Math.min(1, (wave + 1.25) / 2.5));
-      colorAttr.setXYZ(i, dimR + (accent.r - dimR) * e, dimG + (accent.g - dimG) * e, dimB + (accent.b - dimB) * e);
+      colorAttr.setXYZ(i, dimR + (peakR - dimR) * e, dimG + (peakG - dimG) * e, dimB + (peakB - dimB) * e);
     }
     posAttr.needsUpdate = true;
     colorAttr.needsUpdate = true;
   });
 
   return (
-    <mesh rotation={[-Math.PI / 2.3, 0, 0]} position={[0, -3.2, -6]}>
-      <planeGeometry ref={geoRef} args={[46, 30, 40, 40]} />
-      <meshBasicMaterial vertexColors wireframe transparent opacity={0.5} />
+    <mesh rotation={[-Math.PI / 2.3, 0, 0]} position={[0, -3.2, -8]}>
+      {/* Bigger than the visible frustum + a tight fog range (see the
+          <fog> in SignalFieldScene) so the plane's actual rectangular
+          edge is never what fades it out - fog handles that well before
+          the geometry boundary would otherwise show as a hard border. */}
+      <planeGeometry ref={geoRef} args={[70, 50, 44, 44]} />
+      <meshBasicMaterial vertexColors wireframe transparent opacity={0.16} />
     </mesh>
   );
 }
@@ -230,7 +245,7 @@ function ParticleField({
       // echoes the same cyan-then-amber sequence citations use elsewhere.
       const towardHighlight = g === c.activeGroup && c.phase === 'holding' ? 0.45 : 0;
       groupColorRefs[g].copy(accent).lerp(highlight, towardHighlight);
-      groupOpacityRefs[g].current = groupActivity.current[g] * 0.6;
+      groupOpacityRefs[g].current = groupActivity.current[g] * 0.4;
     }
 
     // Slow ambient drift for the whole field - alive even between locks.
@@ -242,9 +257,14 @@ function ParticleField({
     groups.forEach((idxs, g) => {
       const a = groupActivity.current[g];
       idxs.forEach((idx) => {
-        colorAttr[idx * 3] = bg.r + (groupColorRefs[g].r - bg.r) * (0.16 + a * 0.84);
-        colorAttr[idx * 3 + 1] = bg.g + (groupColorRefs[g].g - bg.g) * (0.16 + a * 0.84);
-        colorAttr[idx * 3 + 2] = bg.b + (groupColorRefs[g].b - bg.b) * (0.16 + a * 0.84);
+        // Idle particles sit much closer to the background (0.08) than
+        // before - the "document field" should read as barely-there
+        // texture until a group actually locks on, at which point it
+        // still climbs to a clearly-visible peak (0.9) so the signal-lock
+        // moment reads as a genuine event against the muted field.
+        colorAttr[idx * 3] = bg.r + (groupColorRefs[g].r - bg.r) * (0.08 + a * 0.82);
+        colorAttr[idx * 3 + 1] = bg.g + (groupColorRefs[g].g - bg.g) * (0.08 + a * 0.82);
+        colorAttr[idx * 3 + 2] = bg.b + (groupColorRefs[g].b - bg.b) * (0.08 + a * 0.82);
       });
     });
 
@@ -298,8 +318,8 @@ function CameraRig({ reduceMotion }: { reduceMotion: boolean }) {
   return null;
 }
 
-export function SignalFieldScene({ theme, reduceMotion, paused }: { theme: 'light' | 'dark'; reduceMotion: boolean; paused: boolean }) {
-  const { accent, highlight, bg } = useThemeColors(theme);
+export function SignalFieldScene({ reduceMotion, paused }: { reduceMotion: boolean; paused: boolean }) {
+  const { accent, highlight, bg } = useThemeColors();
 
   return (
     <Canvas
@@ -308,12 +328,19 @@ export function SignalFieldScene({ theme, reduceMotion, paused }: { theme: 'ligh
       camera={{ position: [0, 1.2, 6], fov: 45, near: 0.1, far: 60 }}
       frameloop={paused ? 'never' : 'always'}
     >
-      <fog attach="fog" args={[bg, 9, 20]} />
+      <fog attach="fog" args={[bg, 5, 13]} />
       <Terrain accent={accent} bg={bg} reduceMotion={reduceMotion} />
       <ParticleField accent={accent} highlight={highlight} bg={bg} reduceMotion={reduceMotion} />
       <CameraRig reduceMotion={reduceMotion} />
       <EffectComposer>
-        <Bloom luminanceThreshold={0.35} luminanceSmoothing={0.9} intensity={1.1} />
+        {/* A high threshold + modest intensity on purpose: only a
+            genuinely bright moment (a particle group near full "signal
+            lock" activity, boosted further by additive blending) should
+            ever bloom. The terrain's muted colors (see Terrain's dim/peak
+            mix above) stay well under this threshold in both themes, so
+            it never washes out toward white the way the original, much
+            brighter/lower-threshold version did in dark mode. */}
+        <Bloom luminanceThreshold={0.62} luminanceSmoothing={0.9} intensity={0.55} />
       </EffectComposer>
     </Canvas>
   );

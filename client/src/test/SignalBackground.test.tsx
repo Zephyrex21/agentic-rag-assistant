@@ -10,7 +10,7 @@ import { SignalBackground } from '../components/hero/signal-field/SignalBackgrou
 describe('SignalBackground', () => {
   it('renders the 2D fallback (not the 3D scene) when WebGL is unavailable, without crashing', () => {
     const { container } = render(
-      <SignalBackground theme="dark" reduceMotion={false} orbX={0} orbY={0} />
+      <SignalBackground reduceMotion={false} orbX={0} orbY={0} />
     );
     // The fallback orb is a plain div with a radial-gradient background -
     // its presence (and the absence of a <canvas>, which the 3D scene
@@ -21,7 +21,7 @@ describe('SignalBackground', () => {
 
   it('renders the 2D fallback when reduceMotion is true, regardless of WebGL support', () => {
     const { container } = render(
-      <SignalBackground theme="light" reduceMotion={true} orbX={0} orbY={0} />
+      <SignalBackground reduceMotion={true} orbX={0} orbY={0} />
     );
     expect(container.querySelector('canvas')).not.toBeInTheDocument();
     expect(container.firstChild).not.toBeNull();
