@@ -43,11 +43,13 @@ function makeDotTexture(): THREE.Texture {
  */
 function Terrain({
   accent,
+  highlight,
   bg,
   reduceMotion,
   isDark,
 }: {
   accent: THREE.Color;
+  highlight: THREE.Color;
   bg: THREE.Color;
   reduceMotion: boolean;
   isDark: boolean;
@@ -88,17 +90,39 @@ function Terrain({
     const peakR = bg.r + (accent.r - bg.r) * peakMix;
     const peakG = bg.g + (accent.g - bg.g) * peakMix;
     const peakB = bg.b + (accent.b - bg.b) * peakMix;
+    // A small warm highlight fleck blended in only at the very highest
+    // crests - echoes the amber "verification" accent the particles use
+    // during their own peak moment, giving the terrain a second color
+    // note instead of reading as a flat single-hue grid.
+    const glintMix = isDark ? 0.22 : 0.35;
 
     for (let i = 0; i < posAttr.count; i++) {
       const ix = i * 3;
       const x = base[ix];
       const y = base[ix + 1];
-      const wave =
-        Math.sin(x * 0.18 + t * 0.6) * 0.5 + Math.sin(y * 0.24 - t * 0.4) * 0.35 + Math.sin((x + y) * 0.12 + t * 0.25) * 0.4;
-      posAttr.setZ(i, wave * 0.85);
+      // Multi-octave: a slow broad swell plus two faster, smaller ripples
+      // running at different angles - reads as genuine rolling terrain
+      // rather than one uniform wave, and the added amplitude/speed here
+      // (vs. the original) makes the motion unmistakable at a glance.
+      const swell = Math.sin(x * 0.1 + t * 0.35) * 0.6 + Math.cos(y * 0.13 - t * 0.28) * 0.5;
+      const ripple = Math.sin(x * 0.26 + y * 0.19 + t * 0.9) * 0.4 + Math.sin(x * 0.34 - y * 0.22 - t * 0.7) * 0.3;
+      const wave = swell + ripple;
+      posAttr.setZ(i, wave * 1.05);
 
-      const e = Math.max(0, Math.min(1, (wave + 1.25) / 2.5));
-      colorAttr.setXYZ(i, dimR + (peakR - dimR) * e, dimG + (peakG - dimG) * e, dimB + (peakB - dimB) * e);
+      const e = Math.max(0, Math.min(1, (wave + 1.8) / 3.6));
+      let r = dimR + (peakR - dimR) * e;
+      let g = dimG + (peakG - dimG) * e;
+      let b = dimB + (peakB - dimB) * e;
+      // Only the top slice of crests (e > 0.82) pick up the warm glint,
+      // scaled by how far past that point they are - keeps it an accent,
+      // not a wash over the whole peak region.
+      if (e > 0.82) {
+        const glintT = ((e - 0.82) / 0.18) * glintMix;
+        r += (highlight.r - r) * glintT;
+        g += (highlight.g - g) * glintT;
+        b += (highlight.b - b) * glintT;
+      }
+      colorAttr.setXYZ(i, r, g, b);
     }
     posAttr.needsUpdate = true;
     colorAttr.needsUpdate = true;
@@ -152,8 +176,12 @@ function GroupBeams({
 
   useFrame(() => {
     if (materialRef.current) {
+      const a = opacityRef.current / 0.75; // normalize back to 0..1 activity
       materialRef.current.opacity = opacityRef.current;
-      materialRef.current.color.copy(color);
+      // Same over-bright boost as the particle points - a beam needs
+      // genuine HDR-range brightness to clear Bloom's threshold and
+      // actually glow during the "lock" moment, not just look opaque.
+      materialRef.current.color.copy(color).multiplyScalar(1 + a * 0.9);
     }
   });
 
@@ -260,7 +288,10 @@ function ParticleField({
       // echoes the same cyan-then-amber sequence citations use elsewhere.
       const towardHighlight = g === c.activeGroup && c.phase === 'holding' ? 0.45 : 0;
       groupColorRefs[g].copy(accent).lerp(highlight, towardHighlight);
-      groupOpacityRefs[g].current = groupActivity.current[g] * 0.4;
+      // Same over-bright logic as the particle colors below - a beam at
+      // full activity needs to clear the Bloom threshold to actually
+      // glow, not just look "a bit brighter than transparent".
+      groupOpacityRefs[g].current = groupActivity.current[g] * 0.75;
     }
 
     // Slow ambient drift for the whole field - alive even between locks.
@@ -271,6 +302,18 @@ function ParticleField({
 
     groups.forEach((idxs, g) => {
       const a = groupActivity.current[g];
+      // An "over-bright" boost applied only as activity climbs - at a=0
+      // this is 1 (no change to the normal idle color), at a=1 it scales
+      // the final color up to ~1.9x, deliberately pushing RGB values past
+      // the normal 0..1 range. This is what makes Bloom actually trigger
+      // reliably on a signal-lock: a luminance threshold that's high
+      // enough to leave the idle field and the terrain alone (see their
+      // much lower base mixes) needs a genuinely bright signal to clear
+      // it, and a natural-range color mix alone was landing just under
+      // that line. Combined with AdditiveBlending on the points material
+      // below, overlapping boosted particles in an active cluster read as
+      // a clear, glowing "lock" rather than a barely-brighter dot.
+      const boost = 1 + a * 0.9;
       idxs.forEach((idx) => {
         // Idle mix is theme-aware for the same reason Terrain's is - dark
         // mode's brighter accent needs a lower floor to read as "barely
@@ -280,9 +323,10 @@ function ParticleField({
         // "lock" moment always reads as a clear event.
         const idleMix = isDark ? 0.06 : 0.16;
         const peakMix = isDark ? 0.82 : 0.84;
-        colorAttr[idx * 3] = bg.r + (groupColorRefs[g].r - bg.r) * (idleMix + a * peakMix);
-        colorAttr[idx * 3 + 1] = bg.g + (groupColorRefs[g].g - bg.g) * (idleMix + a * peakMix);
-        colorAttr[idx * 3 + 2] = bg.b + (groupColorRefs[g].b - bg.b) * (idleMix + a * peakMix);
+        const mixed = idleMix + a * peakMix;
+        colorAttr[idx * 3] = (bg.r + (groupColorRefs[g].r - bg.r) * mixed) * boost;
+        colorAttr[idx * 3 + 1] = (bg.g + (groupColorRefs[g].g - bg.g) * mixed) * boost;
+        colorAttr[idx * 3 + 2] = (bg.b + (groupColorRefs[g].b - bg.b) * mixed) * boost;
       });
     });
 
@@ -347,18 +391,18 @@ export function SignalFieldScene({ reduceMotion, paused }: { reduceMotion: boole
       frameloop={paused ? 'never' : 'always'}
     >
       <fog attach="fog" args={[bg, 5, 13]} />
-      <Terrain accent={accent} bg={bg} reduceMotion={reduceMotion} isDark={isDark} />
+      <Terrain accent={accent} highlight={highlight} bg={bg} reduceMotion={reduceMotion} isDark={isDark} />
       <ParticleField accent={accent} highlight={highlight} bg={bg} reduceMotion={reduceMotion} isDark={isDark} />
       <CameraRig reduceMotion={reduceMotion} />
       <EffectComposer>
-        {/* A high threshold + modest intensity on purpose: only a
-            genuinely bright moment (a particle group near full "signal
-            lock" activity, boosted further by additive blending) should
-            ever bloom. The terrain's muted colors (see Terrain's dim/peak
-            mix above) stay well under this threshold in both themes, so
-            it never washes out toward white the way the original, much
-            brighter/lower-threshold version did in dark mode. */}
-        <Bloom luminanceThreshold={0.62} luminanceSmoothing={0.9} intensity={0.55} />
+        {/* Threshold/intensity tuned against the "over-bright boost" the
+            particle/beam materials apply during an active signal-lock
+            (see ParticleField/GroupBeams above) - idle particles and the
+            terrain both stay comfortably under this in both themes, while
+            a boosted, near-1.9x-bright active cluster clears it cleanly,
+            so the glow reliably shows up exactly when a "lock" happens
+            and nowhere else. */}
+        <Bloom luminanceThreshold={0.5} luminanceSmoothing={0.85} intensity={0.85} />
       </EffectComposer>
     </Canvas>
   );
