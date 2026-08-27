@@ -3,6 +3,8 @@ import { useEffect } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { ThemeToggle } from '../ThemeToggle';
 import { LogoMark } from '../LogoMark';
+import { useTheme } from '../../context/ThemeContext';
+import { SignalBackground } from './signal-field/SignalBackground';
 
 const container: Variants = {
   hidden: {},
@@ -56,6 +58,7 @@ function FloatingStamp({
 
 export function Hero({ onEnter }: { onEnter: () => void }) {
   const reduceMotion = useReducedMotion();
+  const { theme } = useTheme();
 
   // Cursor-parallax on the ambient orb - subtle depth cue, disabled
   // entirely under reduced-motion rather than just skipping the spring.
@@ -78,21 +81,21 @@ export function Hero({ onEnter }: { onEnter: () => void }) {
 
   return (
     <div className="relative flex min-h-svh flex-col overflow-hidden">
-      {/* Ambient breathing gradient orb - the "thinking" motif, kept subtle */}
+      {/* "The Array" - a 3D signal-field background (see signal-field/) that
+          falls back to the original 2D orb under reduced-motion, no WebGL,
+          or any runtime error. Hero-only, deliberately - see
+          signal-field/SignalFieldScene.tsx's header comment. */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <motion.div
-          className="absolute left-1/2 top-1/2 h-[38rem] w-[38rem] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-[0.18] blur-[110px]"
-          style={{
-            background: 'radial-gradient(circle, var(--accent) 0%, var(--highlight) 55%, transparent 75%)',
-            x: reduceMotion ? 0 : orbX,
-            y: reduceMotion ? 0 : orbY,
-          }}
-          animate={
-            reduceMotion
-              ? {}
-              : { scale: [1, 1.12, 1], opacity: [0.14, 0.22, 0.14] }
-          }
-          transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut' }}
+        <SignalBackground theme={theme} reduceMotion={Boolean(reduceMotion)} orbX={orbX} orbY={orbY} />
+        {/* Inverse vignette - fades the 3D scene's density right behind the
+            headline/CTA specifically, so the richest part of the visual
+            sits at the edges while the text stays on a calm, legible
+            surface. A CSS overlay is far simpler and more reliable than
+            trying to keep 3D particles/terrain out of a screen-space
+            region as the viewport resizes. */}
+        <div
+          className="absolute inset-0"
+          style={{ background: 'radial-gradient(ellipse 60% 45% at 50% 42%, var(--bg) 0%, transparent 70%)' }}
         />
       </div>
 
