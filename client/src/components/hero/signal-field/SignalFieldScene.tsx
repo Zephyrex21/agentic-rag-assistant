@@ -142,63 +142,12 @@ function Terrain({
   );
 }
 
-/** One radial-fan of line segments from a group's centroid to each of its
- * member particles - sits at opacity 0 until that group is the active
- * "signal lock" for a cycle (see ParticleField's useFrame below). */
-function GroupBeams({
-  centroid,
-  memberPositions,
-  color,
-  opacityRef,
-}: {
-  centroid: THREE.Vector3;
-  memberPositions: number[];
-  color: THREE.Color;
-  opacityRef: { current: number };
-}) {
-  const materialRef = useRef<THREE.LineBasicMaterial>(null);
-
-  const positions = useMemo(() => {
-    const memberCount = memberPositions.length / 3;
-    const arr = new Float32Array(memberCount * 2 * 3);
-    for (let i = 0; i < memberCount; i++) {
-      const o = i * 6;
-      arr[o] = centroid.x;
-      arr[o + 1] = centroid.y;
-      arr[o + 2] = centroid.z;
-      arr[o + 3] = memberPositions[i * 3];
-      arr[o + 4] = memberPositions[i * 3 + 1];
-      arr[o + 5] = memberPositions[i * 3 + 2];
-    }
-    return arr;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useFrame(() => {
-    if (materialRef.current) {
-      const a = opacityRef.current / 0.75; // normalize back to 0..1 activity
-      materialRef.current.opacity = opacityRef.current;
-      // Same over-bright boost as the particle points - a beam needs
-      // genuine HDR-range brightness to clear Bloom's threshold and
-      // actually glow during the "lock" moment, not just look opaque.
-      materialRef.current.color.copy(color).multiplyScalar(1 + a * 0.9);
-    }
-  });
-
-  return (
-    <lineSegments>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
-      </bufferGeometry>
-      <lineBasicMaterial ref={materialRef} transparent opacity={0} color={color} />
-    </lineSegments>
-  );
-}
-
 /** The document-chunk particle field, plus the recurring "signal lock"
- * cycle: every few seconds a random small group brightens, its beams
- * fade in toward its centroid, hold, then everything fades back to idle -
- * an ambient, ongoing visualization of retrieval finding signal in noise. */
+ * cycle: every few seconds a random small group brightens then fades back
+ * to idle - an ambient, ongoing visualization of retrieval finding signal
+ * in noise. Deliberately just the dots pulsing, no connecting lines - an
+ * earlier version fanned thin beams out from each group's centroid, but
+ * that read as a busy "line-cross" pattern rather than a clean pulse. */
 function ParticleField({
   accent,
   highlight,
@@ -215,7 +164,7 @@ function ParticleField({
   const pointsRef = useRef<THREE.Points>(null);
   const dotTexture = useMemo(() => makeDotTexture(), []);
 
-  const { positions, groups, centroids } = useMemo(() => {
+  const { positions, groups } = useMemo(() => {
     const positions = new Float32Array(PARTICLE_COUNT * 3);
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       const angle = Math.random() * Math.PI * 2;
@@ -233,23 +182,12 @@ function ParticleField({
     const groups: number[][] = Array.from({ length: GROUP_COUNT }, () => []);
     order.forEach((idx, n) => groups[n % GROUP_COUNT].push(idx));
 
-    const centroids = groups.map((idxs) => {
-      const c = new THREE.Vector3();
-      idxs.forEach((idx) => c.add(new THREE.Vector3(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2])));
-      c.divideScalar(idxs.length || 1);
-      return c;
-    });
-
-    return { positions, groups, centroids };
+    return { positions, groups };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const colorAttr = useMemo(() => new Float32Array(PARTICLE_COUNT * 3), []);
   const groupActivity = useRef<Float32Array>(new Float32Array(GROUP_COUNT));
-  // Plain objects (not state) so GroupBeams can read the live value each
-  // frame via a stable reference, without triggering React re-renders for
-  // an animation that runs every frame regardless.
-  const groupOpacityRefs = useMemo(() => Array.from({ length: GROUP_COUNT }, () => ({ current: 0 })), []);
   const groupColorRefs = useMemo(() => Array.from({ length: GROUP_COUNT }, () => accent.clone()), [accent]);
   const cycle = useRef({
     activeGroup: -1,
@@ -288,10 +226,6 @@ function ParticleField({
       // echoes the same cyan-then-amber sequence citations use elsewhere.
       const towardHighlight = g === c.activeGroup && c.phase === 'holding' ? 0.45 : 0;
       groupColorRefs[g].copy(accent).lerp(highlight, towardHighlight);
-      // Same over-bright logic as the particle colors below - a beam at
-      // full activity needs to clear the Bloom threshold to actually
-      // glow, not just look "a bit brighter than transparent".
-      groupOpacityRefs[g].current = groupActivity.current[g] * 0.75;
     }
 
     // Slow ambient drift for the whole field - alive even between locks.
@@ -337,33 +271,22 @@ function ParticleField({
   });
 
   return (
-    <>
-      <points ref={pointsRef}>
-        <bufferGeometry>
-          <bufferAttribute attach="attributes-position" args={[positions, 3]} />
-          <bufferAttribute attach="attributes-color" args={[colorAttr, 3]} />
-        </bufferGeometry>
-        <pointsMaterial
-          size={0.16}
-          map={dotTexture}
-          vertexColors
-          transparent
-          opacity={0.9}
-          depthWrite={false}
-          blending={THREE.AdditiveBlending}
-          sizeAttenuation
-        />
-      </points>
-      {groups.map((idxs, g) => (
-        <GroupBeams
-          key={g}
-          centroid={centroids[g]}
-          memberPositions={idxs.flatMap((idx) => [positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]])}
-          color={groupColorRefs[g]}
-          opacityRef={groupOpacityRefs[g]}
-        />
-      ))}
-    </>
+    <points ref={pointsRef}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+        <bufferAttribute attach="attributes-color" args={[colorAttr, 3]} />
+      </bufferGeometry>
+      <pointsMaterial
+        size={0.16}
+        map={dotTexture}
+        vertexColors
+        transparent
+        opacity={0.9}
+        depthWrite={false}
+        blending={THREE.AdditiveBlending}
+        sizeAttenuation
+      />
+    </points>
   );
 }
 
@@ -390,7 +313,13 @@ export function SignalFieldScene({ reduceMotion, paused }: { reduceMotion: boole
       camera={{ position: [0, 1.2, 6], fov: 45, near: 0.1, far: 60 }}
       frameloop={paused ? 'never' : 'always'}
     >
-      <fog attach="fog" args={[bg, 5, 13]} />
+      {/* Fog near/far distance matters a lot here - the terrain mesh's
+          center sits roughly 14 units from the camera (see Terrain's
+          position below), so a fog range that ends much before that would
+          fade the far/middle portion of the grid to nothing, leaving only
+          the near edge (bottom of screen) visible - exactly the "mesh only
+          visible at the bottom" bug this range is sized to avoid. */}
+      <fog attach="fog" args={[bg, 8, 30]} />
       <Terrain accent={accent} highlight={highlight} bg={bg} reduceMotion={reduceMotion} isDark={isDark} />
       <ParticleField accent={accent} highlight={highlight} bg={bg} reduceMotion={reduceMotion} isDark={isDark} />
       <CameraRig reduceMotion={reduceMotion} />
