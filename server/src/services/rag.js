@@ -159,12 +159,12 @@ function extractCitedSourceNumbers(answerText) {
  * metadata-normalization logic per variant. Also reports raw hit counts
  * (before fusion/dedup) purely for the pipeline trace.
  */
-async function searchOneQuery(queryText, filter, documentIds) {
+async function searchOneQuery(queryText, filter, documentIds, userId) {
   const vectorPromise = embedOne(queryText, 'RETRIEVAL_QUERY').then((vector) =>
     queryVectors(vector, CANDIDATE_POOL, filter)
   );
   const keywordPromise = ENABLE_HYBRID_SEARCH
-    ? keywordSearch(queryText, CANDIDATE_POOL, documentIds)
+    ? keywordSearch(queryText, CANDIDATE_POOL, documentIds, userId)
     : Promise.resolve([]);
 
   const [vectorMatches, keywordMatches] = await Promise.all([vectorPromise, keywordPromise]);
@@ -209,13 +209,25 @@ async function searchOneQuery(queryText, filter, documentIds) {
  *
  * @param {string[]} queries - one or more query strings to search with
  * @param {string[]} [documentIds] - optional scope filter
+ * @param {string|null} [userId] - owner scope: a real id restricts to that
+ *   user's own documents, null restricts to the guest pool. Applied on
+ *   BOTH the Pinecone filter and the keyword search - a document/its
+ *   chunks are tagged with the same owner at ingestion time (see
+ *   ingestionWorker.js), so this is what actually prevents one user's
+ *   query from ever retrieving another user's (or the guest pool's)
+ *   content, independent of whatever documentIds the request also asked
+ *   to scope to.
  */
-async function gatherCandidates(queries, documentIds) {
-  const filter = Array.isArray(documentIds) && documentIds.length > 0
-    ? { documentId: { $in: documentIds } }
-    : undefined;
+async function gatherCandidates(queries, documentIds, userId) {
+  const filter = {
+    // Pinecone has no clean way to filter on "this field is missing," so
+    // ingestion always sets a concrete userId value (a real id, or the
+    // 'guest' sentinel) - see pinecone.js's upsertVectors doc comment.
+    userId: { $eq: userId || 'guest' },
+    ...(Array.isArray(documentIds) && documentIds.length > 0 ? { documentId: { $in: documentIds } } : {}),
+  };
 
-  const perQueryResults = await Promise.all(queries.map((q) => searchOneQuery(q, filter, documentIds)));
+  const perQueryResults = await Promise.all(queries.map((q) => searchOneQuery(q, filter, documentIds, userId)));
 
   const lookup = new Map();
   const listsUsed = [];
@@ -282,8 +294,11 @@ function toChunkRef(c) {
  *   question as originalQuestion for the same reason - rewriteQuery mostly
  *   just resolves pronouns/references, but there's no reason to rely on
  *   that holding for every case when the real original is right there.
+ * @param {string|null} [userId] - owner scope threaded through to
+ *   gatherCandidates - see its own doc comment for why this is the actual
+ *   security boundary, not just a display filter.
  */
-async function runRetrieval(searchQuery, documentIds, originalQuestion) {
+async function runRetrieval(searchQuery, documentIds, originalQuestion, userId) {
   const broadnessQuery = originalQuestion || searchQuery;
   const traceRaw = {};
 
@@ -300,7 +315,7 @@ async function runRetrieval(searchQuery, documentIds, originalQuestion) {
   traceRaw.queryVariantCount = queries.length;
 
   t = Date.now();
-  const { listsUsed, lookup, vectorHits, keywordHits } = await gatherCandidates(queries, documentIds);
+  const { listsUsed, lookup, vectorHits, keywordHits } = await gatherCandidates(queries, documentIds, userId);
   const fused = reciprocalRankFusion(listsUsed);
   traceRaw.retrievalMs = Date.now() - t;
   traceRaw.hybridSearchEnabled = ENABLE_HYBRID_SEARCH;
@@ -402,12 +417,12 @@ async function runRetrieval(searchQuery, documentIds, originalQuestion) {
  * ENABLE_AGENTIC_MODE is off, or as the fallback if agentic planning fails
  * (see retrieveAndAnswerStream).
  */
-async function retrieveChunks(question, { documentIds, history = [] } = {}) {
+async function retrieveChunks(question, { documentIds, history = [], userId = null } = {}) {
   let t = Date.now();
   const searchQuery = ENABLE_QUERY_REWRITE ? await rewriteQuery(question, history) : question;
   const rewriteMs = Date.now() - t;
 
-  const { chunks, listsUsed, traceRaw: retrievalTraceRaw } = await runRetrieval(searchQuery, documentIds, question);
+  const { chunks, listsUsed, traceRaw: retrievalTraceRaw } = await runRetrieval(searchQuery, documentIds, question, userId);
 
   const traceRaw = {
     mode: 'fixed',
@@ -543,6 +558,7 @@ async function runBackgroundVerification({
   history,
   streamStart,
   isCancelled = () => false,
+  userId = null,
   // Injectable seams purely for offline testing (see test-cancellation.js) -
   // every real caller relies on the defaults (the actual verifyAnswer/
   // generateAnswer), so this is invisible to production behavior.
@@ -608,7 +624,7 @@ async function runBackgroundVerification({
         `The previous answer to "${question}" had this problem: ${check.issue}. Search for information that would fix it.`,
         documentIds,
         history,
-        { maxSteps: 2 }
+        { maxSteps: 2, userId }
       );
       traceRaw.researchOnRevisionMs = Date.now() - researchStart;
       traceRaw.researchOnRevision = true;
@@ -662,7 +678,7 @@ async function* retrieveAndAnswerStream(question, options = {}) {
   // directly) get identical behavior to before this existed. See
   // query.js/conversations.js for where the real one (backed by the
   // response's 'close' event) gets passed in.
-  const { documentIds, history = [], isCancelled = () => false } = options;
+  const { documentIds, history = [], isCancelled = () => false, userId = null } = options;
 
   let retrieval = null;
   if (ENABLE_AGENTIC_MODE) {
@@ -671,14 +687,14 @@ async function* retrieveAndAnswerStream(question, options = {}) {
       // runRetrieval/buildSources/NO_INFO_ANSWER, and this is the only
       // place rag.js needs anything back from agenticRag.js.
       const { runAgenticRetrieval } = require('./agenticRag');
-      retrieval = await runAgenticRetrieval(question, documentIds, history);
+      retrieval = await runAgenticRetrieval(question, documentIds, history, { userId });
     } catch (err) {
       console.warn(`[rag] agentic planning failed (${err.message}), falling back to the fixed pipeline for this query.`);
       retrieval = null;
     }
   }
   if (!retrieval) {
-    retrieval = await retrieveChunks(question, { documentIds, history });
+    retrieval = await retrieveChunks(question, { documentIds, history, userId });
   }
 
   const { chunks, listsUsed, traceRaw } = retrieval;
@@ -747,7 +763,7 @@ async function* retrieveAndAnswerStream(question, options = {}) {
   // below should ever be interpreted as replacing what was already shown;
   // see the type-by-type contract in this function's doc comment above.
   const backgroundResult = await Promise.race([
-    runBackgroundVerification({ question, fullAnswer, finalSources, workingChunks, listsUsed, traceRaw, documentIds, history, streamStart, isCancelled }),
+    runBackgroundVerification({ question, fullAnswer, finalSources, workingChunks, listsUsed, traceRaw, documentIds, history, streamStart, isCancelled, userId }),
     new Promise((resolve) => {
       setTimeout(() => resolve(null), BACKGROUND_VERIFICATION_TIMEOUT_MS);
     }),

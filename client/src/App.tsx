@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState } from 'react';
 import { AnimatePresence, motion, MotionConfig } from 'framer-motion';
 import { ThemeProvider } from './context/ThemeContext';
+import { AuthProvider } from './context/AuthContext';
 import { DocumentsProvider } from './context/DocumentsContext';
 import { ConversationsProvider } from './context/ConversationsContext';
 import { Hero } from './components/hero/Hero';
@@ -60,15 +61,17 @@ function App() {
   return (
     <MotionConfig reducedMotion="user">
       <ThemeProvider>
-        <DocumentsProvider>
-          <ConversationsProvider>
-            <AmbientBackground />
-            <GrainOverlay />
-            <ColdStartNotice />
-            <AccessKeyGate />
-            <AppContent />
-          </ConversationsProvider>
-        </DocumentsProvider>
+        <AuthProvider>
+          <DocumentsProvider>
+            <ConversationsProvider>
+              <AmbientBackground />
+              <GrainOverlay />
+              <ColdStartNotice />
+              <AccessKeyGate />
+              <AppContent />
+            </ConversationsProvider>
+          </DocumentsProvider>
+        </AuthProvider>
       </ThemeProvider>
     </MotionConfig>
   );

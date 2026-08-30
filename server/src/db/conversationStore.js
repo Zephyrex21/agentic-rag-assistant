@@ -6,7 +6,13 @@ const MESSAGES = 'messages';
 
 function conversationFromDb(row) {
   if (!row) return null;
-  return { id: row.id, title: row.title, createdAt: row.created_at, updatedAt: row.updated_at };
+  return {
+    id: row.id,
+    title: row.title,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    userId: 'user_id' in row ? row.user_id : undefined,
+  };
 }
 
 function messageFromDb(row) {
@@ -24,23 +30,44 @@ function messageFromDb(row) {
   };
 }
 
-async function createConversation(title = 'New conversation') {
+/** @param {{ userId?: string | null }} [options] - null for a guest
+ *  conversation, a real id to own it; omitted only for internal/legacy
+ *  callers - route-facing calls should always pass this explicitly. */
+async function createConversation(title = 'New conversation', options = {}) {
   const supabase = getSupabase();
-  const { data, error } = await supabase.from(CONVERSATIONS).insert({ title }).select().single();
-  if (error) throw new Error(`conversationStore.createConversation failed: ${error.message}`);
+  const payload = { title };
+  if ('userId' in options) payload.user_id = options.userId;
+  const { data, error } = await supabase.from(CONVERSATIONS).insert(payload).select().single();
+  if (error) {
+    // user_id is the newest column (migration_007) - retry without it if
+    // that migration hasn't been run yet, same fail-open pattern
+    // documentStore.create uses for content_hash/user_id.
+    if (/user_id/i.test(error.message) && 'user_id' in payload) {
+      console.warn(
+        `[conversationStore] insert failed on user_id (${error.message}) - has migration_007_users_and_ownership.sql been run? Retrying without it.`
+      );
+      const { user_id, ...withoutUserId } = payload;
+      const retry = await supabase.from(CONVERSATIONS).insert(withoutUserId).select().single();
+      if (retry.error) throw new Error(`conversationStore.createConversation failed: ${retry.error.message}`);
+      return conversationFromDb(retry.data);
+    }
+    throw new Error(`conversationStore.createConversation failed: ${error.message}`);
+  }
   return conversationFromDb(data);
 }
 
 /**
- * @param {{ limit?: number, offset?: number }} [options] - OPT-IN
- *   pagination, same convention as documentStore.list: omitted entirely
- *   (the default) returns every conversation, exactly as before this
- *   existed, so the existing /api/conversations route with no query
- *   params is completely unaffected.
+ * @param {{ limit?: number, offset?: number, userId?: string | null }} [options] -
+ *   limit/offset are OPT-IN pagination, same convention as
+ *   documentStore.list. userId scopes to one owner (null = guest pool);
+ *   omitted only for the rare unscoped/internal case.
  */
 async function listConversations(options = {}) {
   const supabase = getSupabase();
   let query = supabase.from(CONVERSATIONS).select('*').order('updated_at', { ascending: false });
+  if ('userId' in options) {
+    query = options.userId === null ? query.is('user_id', null) : query.eq('user_id', options.userId);
+  }
   if (typeof options.limit === 'number') {
     const offset = typeof options.offset === 'number' ? options.offset : 0;
     query = query.range(offset, offset + options.limit - 1);
@@ -92,13 +119,23 @@ async function annotateStaleCitations(messages) {
   });
 }
 
-async function getConversation(conversationId) {
+/**
+ * @param {string} conversationId
+ * @param {{ userId?: string | null }} [options] - scopes the lookup to one
+ *   owner (null = guest pool) - a conversation belonging to someone else
+ *   resolves as not-found rather than leaking its existence or contents.
+ *   Every route-facing call passes this; every message-level function
+ *   below (getRecentMessages/addMessage/updateMessage) is only ever
+ *   reached in this codebase AFTER a route has already confirmed
+ *   ownership via this function, so they don't re-check it themselves.
+ */
+async function getConversation(conversationId, options = {}) {
   const supabase = getSupabase();
-  const { data: convo, error: convoErr } = await supabase
-    .from(CONVERSATIONS)
-    .select('*')
-    .eq('id', conversationId)
-    .maybeSingle();
+  let query = supabase.from(CONVERSATIONS).select('*').eq('id', conversationId);
+  if ('userId' in options) {
+    query = options.userId === null ? query.is('user_id', null) : query.eq('user_id', options.userId);
+  }
+  const { data: convo, error: convoErr } = await query.maybeSingle();
   if (convoErr) throw new Error(`conversationStore.getConversation failed: ${convoErr.message}`);
   if (!convo) return null;
 

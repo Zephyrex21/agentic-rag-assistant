@@ -38,6 +38,15 @@ function errorResponse(res, status, code, message, extra) {
   return res.status(status).json({ error: { code, message, ...extra } });
 }
 
+// userId is always read the same way across every route below: a logged-in
+// person's documents belong to their account (req.user.id); everyone else
+// (a guest, or anyone before user accounts existed) shares the same
+// user_id IS NULL pool exactly as this app always worked. See
+// middleware/userAuth.js for how req.user gets set (or stays null).
+function ownerId(req) {
+  return req.user?.id ?? null;
+}
+
 // POST /api/documents/upload
 router.post('/upload', (req, res) => {
   upload.single('file')(req, res, async (err) => {
@@ -54,6 +63,8 @@ router.post('/upload', (req, res) => {
       return errorResponse(res, 400, 'NO_FILE', 'No file was provided in the "file" field.');
     }
 
+    const userId = ownerId(req);
+
     // Everything from here on can hit Supabase, which can throw (bad creds, network
     // blip, table missing, etc.) - wrapped so a DB error becomes a clean 500 response
     // instead of an unhandled rejection that takes the whole server down.
@@ -66,12 +77,14 @@ router.post('/upload', (req, res) => {
       // error - and the upload must still succeed exactly as it did before
       // this feature existed, just without duplicate detection, rather
       // than breaking the entire upload flow over an optional enhancement.
+      // Scoped to the same owner - two different accounts uploading the
+      // same public PDF are never "duplicates" of each other.
       let existingDuplicate = null;
       try {
-        existingDuplicate = await documentStore.findByContentHash(contentHash);
+        existingDuplicate = await documentStore.findByContentHash(contentHash, { userId });
       } catch (hashErr) {
         console.warn(
-          `[documents] duplicate-content check unavailable (${hashErr.message}) - has migration_006_document_content_hash.sql been run? Proceeding without it.`
+          `[documents] duplicate-content check unavailable (${hashErr.message}) - has the relevant migration been run? Proceeding without it.`
         );
       }
 
@@ -104,6 +117,7 @@ router.post('/upload', (req, res) => {
         // string/undefined both mean "no folder", not a literal folder id.
         folderId: req.body.folderId || null,
         contentHash,
+        userId,
       };
 
       await documentStore.create(doc);
@@ -114,6 +128,7 @@ router.post('/upload', (req, res) => {
         documentId,
         filePath: req.file.path,
         filename: req.file.originalname,
+        userId,
       });
 
       res.status(202).json({ documentId, filename: doc.filename, status: doc.status });
@@ -127,7 +142,7 @@ router.post('/upload', (req, res) => {
 // GET /api/documents/:id/status
 router.get('/:id/status', async (req, res) => {
   try {
-    const doc = await documentStore.get(req.params.id);
+    const doc = await documentStore.get(req.params.id, { userId: ownerId(req) });
     if (!doc) return errorResponse(res, 404, 'DOCUMENT_NOT_FOUND', 'No document with that ID.');
     res.json({
       documentId: doc.id,
@@ -149,9 +164,11 @@ router.get('/:id/status', async (req, res) => {
 // existed. `hasMore` lets the frontend know whether another page exists
 // without a separate count query - true whenever exactly `limit` rows
 // came back, since that's the only case where a further page might exist.
+// Always scoped to the requester's own account (or the shared guest pool)
+// - see ownerId() above.
 router.get('/', async (req, res) => {
   try {
-    const options = {};
+    const options = { userId: ownerId(req) };
     if (req.query.folderId === 'none') options.folderId = null;
     else if (req.query.folderId) options.folderId = req.query.folderId;
 
@@ -192,11 +209,12 @@ router.get('/', async (req, res) => {
 // back to uncategorized if folderId is null.
 router.patch('/:id/folder', async (req, res) => {
   try {
-    const doc = await documentStore.get(req.params.id);
+    const userId = ownerId(req);
+    const doc = await documentStore.get(req.params.id, { userId });
     if (!doc) return errorResponse(res, 404, 'DOCUMENT_NOT_FOUND', 'No document with that ID.');
 
     const folderId = req.body.folderId ?? null;
-    const updated = await documentStore.moveToFolder(req.params.id, folderId);
+    const updated = await documentStore.moveToFolder(req.params.id, folderId, { userId });
     res.json({ id: updated.id, folderId: updated.folderId ?? null });
   } catch (err) {
     console.error('[documents] move to folder failed:', err.message);
@@ -207,7 +225,8 @@ router.patch('/:id/folder', async (req, res) => {
 // DELETE /api/documents/:id
 router.delete('/:id', async (req, res) => {
   try {
-    const doc = await documentStore.get(req.params.id);
+    const userId = ownerId(req);
+    const doc = await documentStore.get(req.params.id, { userId });
     if (!doc) return errorResponse(res, 404, 'DOCUMENT_NOT_FOUND', 'No document with that ID.');
 
     try {
@@ -223,7 +242,7 @@ router.delete('/:id', async (req, res) => {
       console.warn(`[documents] chunks table delete skipped/failed for ${req.params.id}:`, chunkErr.message);
     }
 
-    await documentStore.remove(req.params.id);
+    await documentStore.remove(req.params.id, { userId });
     res.json({ success: true });
   } catch (err) {
     console.error('[documents] delete failed:', err.message);

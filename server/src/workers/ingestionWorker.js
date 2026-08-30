@@ -35,8 +35,13 @@ async function embedChunksInBatches(texts) {
  * Designed to be fired-and-forgotten by the upload route: it updates the
  * document's status in the store as it progresses, so the frontend can
  * poll GET /api/documents/:id/status instead of blocking the upload request.
+ *
+ * @param {{ documentId: string, filePath: string, filename: string, userId?: string | null }} args -
+ *   userId (null for a guest upload) gets denormalized onto every chunk's
+ *   Pinecone metadata and chunks-table row, so retrieval can be scoped to
+ *   the same owner later - see rag.js's userId threading.
  */
-async function processDocument({ documentId, filePath, filename }) {
+async function processDocument({ documentId, filePath, filename, userId = null }) {
   try {
     // 1. Extract raw text
     const rawText = await extractText(filePath);
@@ -53,7 +58,9 @@ async function processDocument({ documentId, filePath, filename }) {
     // 3. Embed all chunks, in bounded sub-batches rather than one call
     const vectors = await embedChunksInBatches(chunks.map((c) => c.text));
 
-    // 4. Build Pinecone upsert payload with citation metadata
+    // 4. Build Pinecone upsert payload with citation metadata. userId uses
+    //    a 'guest' sentinel string rather than Pinecone's own null/missing
+    //    handling - see pinecone.js's upsertVectors doc comment for why.
     const pineconeVectors = chunks.map((chunk, i) => ({
       id: `${documentId}_chunk_${chunk.chunkIndex}`,
       values: vectors[i],
@@ -63,6 +70,7 @@ async function processDocument({ documentId, filePath, filename }) {
         chunkIndex: chunk.chunkIndex,
         section: chunk.section || 'N/A',
         text: chunk.text, // stored so retrieval doesn't need a second lookup
+        userId: userId || 'guest',
       },
     }));
 
@@ -77,6 +85,7 @@ async function processDocument({ documentId, filePath, filename }) {
         chunkIndex: chunk.chunkIndex,
         section: chunk.section || 'N/A',
         text: chunk.text,
+        userId, // real NULL in Postgres (unlike Pinecone's sentinel) - see chunkStore.insertChunks
       }))
     );
 

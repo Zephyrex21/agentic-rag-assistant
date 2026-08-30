@@ -32,6 +32,7 @@
     "test:uploadcleanup": "node src/utils/test-uploadcleanup.js",
     "test:usagetracker": "node src/utils/test-usagetracker.js",
     "test:logger": "node src/utils/test-logger.js",
+    "test:authtokens": "node src/utils/test-authtokens.js",
     "test:routes": "node --test \"test/*.test.js\"",
     "eval": "node eval/run-eval.js",
     "diagnose:keys": "node src/utils/diagnose-api-keys.js"
@@ -39,11 +40,14 @@
   "dependencies": {
     "@pinecone-database/pinecone": "^3.0.3",
     "@supabase/supabase-js": "^2.110.2",
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-rate-limit": "^8.6.2",
     "groq-sdk": "^1.4.1",
+    "jsonwebtoken": "^9.0.3",
     "mammoth": "^1.8.0",
     "multer": "^2.0.0",
     "openai": "^7.2.0",

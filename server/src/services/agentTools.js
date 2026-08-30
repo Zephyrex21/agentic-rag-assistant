@@ -45,10 +45,14 @@ const TOOL_DEFINITIONS = [
  * aren't actually searchable yet, so surfacing them here would be misleading.
  *
  * @param {string[]} [documentIds]
+ * @param {string|null} [userId] - owner scope: a real id restricts to that
+ *   user's own documents, null restricts to the guest pool - so the
+ *   planner's list_documents tool can never reveal another user's
+ *   filenames as "available documents".
  * @returns {Promise<string[]>} filenames
  */
-async function listReadyDocuments(documentIds) {
-  const all = await documentStore.list();
+async function listReadyDocuments(documentIds, userId = null) {
+  const all = await documentStore.list({ userId });
   const scoped = filterToScope(all, documentIds);
   return scoped.filter((d) => d.status === 'ready').map((d) => d.filename);
 }

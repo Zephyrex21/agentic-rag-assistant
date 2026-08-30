@@ -21,10 +21,15 @@ function writeSseEvent(res, event, data) {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
+// See routes/documents.js's ownerId() for the same convention.
+function ownerId(req) {
+  return req.user?.id ?? null;
+}
+
 // POST /api/conversations - start a new conversation thread
 router.post('/', async (req, res) => {
   try {
-    const conversation = await conversationStore.createConversation();
+    const conversation = await conversationStore.createConversation('New conversation', { userId: ownerId(req) });
     res.status(201).json({ conversationId: conversation.id, title: conversation.title });
   } catch (err) {
     console.error('[conversations] create failed:', err.message);
@@ -35,9 +40,10 @@ router.post('/', async (req, res) => {
 // GET /api/conversations - list all threads (most recently active first)
 // Optional ?limit=&offset= opt into pagination - both omitted (the
 // default) returns every conversation, unchanged from before this existed.
+// Always scoped to the requester's own account (or the shared guest pool).
 router.get('/', async (req, res) => {
   try {
-    const options = {};
+    const options = { userId: ownerId(req) };
     let limit;
     if (req.query.limit !== undefined) {
       limit = parseInt(req.query.limit, 10);
@@ -66,7 +72,7 @@ router.get('/', async (req, res) => {
 // GET /api/conversations/:id - full thread with all messages
 router.get('/:id', async (req, res) => {
   try {
-    const conversation = await conversationStore.getConversation(req.params.id);
+    const conversation = await conversationStore.getConversation(req.params.id, { userId: ownerId(req) });
     if (!conversation) return errorResponse(res, 404, 'CONVERSATION_NOT_FOUND', 'No conversation with that ID.');
     res.json(conversation);
   } catch (err) {
@@ -83,6 +89,7 @@ router.get('/:id', async (req, res) => {
 router.post('/:id/messages', async (req, res) => {
   const { question, documentIds } = req.body || {};
   const conversationId = req.params.id;
+  const userId = ownerId(req);
 
   if (!question || typeof question !== 'string' || !question.trim()) {
     return errorResponse(res, 400, 'MISSING_QUESTION', 'Request body must include a non-empty "question" string.');
@@ -90,7 +97,10 @@ router.post('/:id/messages', async (req, res) => {
 
   let conversation;
   try {
-    conversation = await conversationStore.getConversation(conversationId);
+    // Scoped by owner - a conversation belonging to someone else (or the
+    // guest pool, if this request is logged in) resolves as not-found
+    // rather than letting a guessed/leaked ID be posted into.
+    conversation = await conversationStore.getConversation(conversationId, { userId });
   } catch (err) {
     console.error('[conversations] lookup failed:', err.message);
     return errorResponse(res, 500, 'MESSAGE_FAILED', err.message);
@@ -120,7 +130,7 @@ router.post('/:id/messages', async (req, res) => {
 
     let assistantMessage = null;
 
-    for await (const event of rag.retrieveAndAnswerStream(question, { documentIds, history, isCancelled: () => clientDisconnected })) {
+    for await (const event of rag.retrieveAndAnswerStream(question, { documentIds, history, isCancelled: () => clientDisconnected, userId })) {
       if (clientDisconnected) break; // stop doing work if nobody's listening anymore
 
       if (event.type === 'sources') {
@@ -221,7 +231,7 @@ router.patch('/:id/messages/:messageId/revision', async (req, res) => {
   }
 
   try {
-    const conversation = await conversationStore.getConversation(req.params.id);
+    const conversation = await conversationStore.getConversation(req.params.id, { userId: ownerId(req) });
     if (!conversation) return errorResponse(res, 404, 'CONVERSATION_NOT_FOUND', 'No conversation with that ID.');
 
     const updated = await conversationStore.updateMessage(req.params.messageId, {
@@ -242,7 +252,7 @@ router.patch('/:id/messages/:messageId/revision', async (req, res) => {
 // DELETE /api/conversations/:id
 router.delete('/:id', async (req, res) => {
   try {
-    const conversation = await conversationStore.getConversation(req.params.id);
+    const conversation = await conversationStore.getConversation(req.params.id, { userId: ownerId(req) });
     if (!conversation) return errorResponse(res, 404, 'CONVERSATION_NOT_FOUND', 'No conversation with that ID.');
     await conversationStore.deleteConversation(req.params.id);
     res.json({ success: true });

@@ -195,7 +195,7 @@ agentic-rag-assistant/
 Free-tier accounts for [Groq](https://console.groq.com/keys) (no credit card required), [Jina AI](https://jina.ai/embeddings/), [Pinecone](https://app.pinecone.io), and [Supabase](https://supabase.com) — no paid tier required anywhere.
 
 ### 1. Supabase setup
-Run `server/supabase/schema.sql`, then `server/supabase/migration_002_hybrid_search.sql`, then `server/supabase/migration_003_self_verification.sql`, then `server/supabase/migration_004_document_folders.sql`, then `server/supabase/migration_005_pipeline_trace.sql`, then `server/supabase/migration_006_document_content_hash.sql` in the Supabase SQL Editor.
+Run `server/supabase/schema.sql`, then `server/supabase/migration_002_hybrid_search.sql`, then `server/supabase/migration_003_self_verification.sql`, then `server/supabase/migration_004_document_folders.sql`, then `server/supabase/migration_005_pipeline_trace.sql`, then `server/supabase/migration_006_document_content_hash.sql`, then `server/supabase/migration_007_users_and_ownership.sql` in the Supabase SQL Editor.
 
 ### 2. Pinecone setup
 Create an index named to match `PINECONE_INDEX_NAME`, with **dimension 768** and **cosine** metric.
@@ -372,13 +372,14 @@ A few things worth knowing about the trust model here, beyond CORS/access-key ab
 - **No per-user data isolation** — the single shared `APP_ACCESS_KEY` above controls who can reach the API at all, but every document/conversation is still visible to everyone who has the key (see Known Limitations). Fine for a single person's own deployment; not a multi-tenant access control system.
 - **Background verification stops on disconnect** — self-verification and revision generation run *after* the streamed answer completes; if the client disconnects before that background work starts (or partway through, after the initial check), it's cancelled rather than running to completion for nobody, so a closed tab doesn't quietly keep spending Groq/embedding quota. See `runBackgroundVerification`'s `isCancelled` param in `rag.js`.
 - **Duplicate uploads are flagged, not silently indexed twice** — each upload is hashed (SHA-256 of the raw file bytes); re-uploading the exact same file returns a 409 naming the existing document instead of creating a second copy in the retrieval pool. Fails open if `migration_006_document_content_hash.sql` hasn't been run yet (upload still works, just without this check) — see `documentStore.js`'s `findByContentHash`/`create`.
+- **User accounts with real per-user data isolation** — signup/login (email + password, bcrypt-hashed, a JWT session cookie) via `POST /api/auth/{signup,login,logout}` and `GET /api/auth/me`. Guest mode (no account at all) works exactly as this app always did, scoped to a shared `user_id IS NULL` pool; a logged-in user's uploads/conversations are tagged with their account and only ever visible to them from then on — enforced at the data layer (documentStore/conversationStore/folderStore's `userId` option, plus a `userId` field on every Pinecone vector and keyword-search chunk row) rather than only in route handlers, so the isolation holds even if a route forgot to check. See `migration_007_users_and_ownership.sql` and `middleware/userAuth.js`.
 
 ## Known Limitations
 
 - Retrieval uses only the current question's embedding — in the fixed pipeline, conversation history informs generation via query rewriting before retrieval but isn't otherwise used to re-rank results; the agentic planner sees history directly and can resolve references itself, but still doesn't re-rank based on it
 - Agentic planning adds one or more extra LLM round-trips before generation starts - typically a few hundred ms to ~1-2s depending on how many searches the planner decides to run, in exchange for the ability to skip or multiply searches as the question actually needs
 - The planner is capped at `AGENTIC_MAX_STEPS` (default 3) round-trips - a question that genuinely needs more than that many distinct searches will proceed with whatever's been gathered so far rather than continuing indefinitely
-- Auth is a single shared access key (`APP_ACCESS_KEY`), not a full user/session system — every document and conversation is visible to anyone with the key, there's no per-user data isolation. Sufficient for a single person's own deployment; a genuine multi-user setup would need a real auth/data model change, not just this key
+- Two independent auth layers, not one: `APP_ACCESS_KEY` gates the deployment itself (can anyone reach this site at all), while signup/login accounts (see Security above) control per-user data isolation within it. A deployment can use either, both, or neither - guest mode (no account) always shares the same `user_id IS NULL` pool it always has, account or no account, matching this app's original single-tenant behavior for anyone who doesn't sign up
 - PDF parsing is capped at `PDF_EXTRACTION_TIMEOUT_MS` (default 60s) — a resource-constrained host can take far longer than a well-provisioned machine to parse a large/complex PDF, and a document that exceeds this fails cleanly with a clear message instead of sitting in "processing" forever
 - Duplicate detection (`content_hash`, migration_006) compares exact byte-for-byte file content — a re-export or re-scan of the same underlying document (different bytes, same content) won't be caught, only a genuinely identical file
 - Pagination (`?limit=&offset=` on `GET /api/documents` and `GET /api/conversations`) is opt-in and available at the API level, but the frontend doesn't yet have infinite-scroll/paged UI wired up to it - it currently still fetches everything in one request, which is fine at the document/conversation counts this project is meant for but is the next thing to build if that stops being true
@@ -395,7 +396,8 @@ A few things worth knowing about the trust model here, beyond CORS/access-key ab
 
 ## Roadmap
 
-- Real multi-user auth with per-user data isolation — the current `APP_ACCESS_KEY` (see Security above) is a single shared secret, deliberately sized for a single-person deployment, not a genuine multi-tenant system
+- Password reset / email verification for user accounts (currently signup only needs an email + password, no confirmation step)
+- OAuth (Google/GitHub sign-in) as an alternative to email + password
 - Wider agent tool set — a calculator/math tool for numeric questions over tabular data, or a document-comparison tool that explicitly diffs two sources instead of relying on the generation prompt to synthesize across separately-retrieved chunks
 - Multi-key rotation for the Groq free tier, so a single conversation's planning + generation + verification calls can spread across more than one API key
 - Frontend pagination UI (infinite scroll or a "load more" control) for the documents and conversations lists, now that the API supports it (see Known Limitations)

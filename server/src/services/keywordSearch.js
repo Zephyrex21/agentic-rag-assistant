@@ -15,9 +15,14 @@ const TABLE = 'chunks';
  * @param {string} queryText
  * @param {number} topK
  * @param {string[]} [documentIds] - optional scope filter, same semantics as Pinecone's
+ * @param {string|null} [userId] - owner scope: a real id restricts to that
+ *   user's chunks, null restricts to the guest pool (user_id IS NULL),
+ *   undefined leaves it unscoped (only for internal/legacy callers - every
+ *   route-facing search always passes this explicitly, same discipline as
+ *   documentStore/conversationStore's userId options).
  * @returns {Promise<Array<{id: string, documentId: string, filename: string, chunkIndex: number, section: string, text: string}>>}
  */
-async function keywordSearch(queryText, topK = 15, documentIds) {
+async function keywordSearch(queryText, topK = 15, documentIds, userId) {
   const supabase = getSupabase();
 
   let query = supabase
@@ -31,6 +36,9 @@ async function keywordSearch(queryText, topK = 15, documentIds) {
 
   if (Array.isArray(documentIds) && documentIds.length > 0) {
     query = query.in('document_id', documentIds);
+  }
+  if (userId !== undefined) {
+    query = userId === null ? query.is('user_id', null) : query.eq('user_id', userId);
   }
 
   const { data, error } = await query;

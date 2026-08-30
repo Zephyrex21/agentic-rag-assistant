@@ -41,7 +41,7 @@ router.post('/', async (req, res) => {
   try {
     const queryId = randomUUID();
 
-    for await (const event of rag.retrieveAndAnswerStream(question, { documentIds, isCancelled: () => clientDisconnected })) {
+    for await (const event of rag.retrieveAndAnswerStream(question, { documentIds, isCancelled: () => clientDisconnected, userId: req.user?.id ?? null })) {
       if (clientDisconnected) break;
 
       if (event.type === 'sources') {

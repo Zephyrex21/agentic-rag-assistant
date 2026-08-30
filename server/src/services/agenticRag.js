@@ -110,7 +110,7 @@ function resolveSearchQuery(args, fallbackQuery) {
   return { query: hasUsableQuery ? args.query.trim() : fallbackQuery, usedFallback: !hasUsableQuery };
 }
 
-async function executeToolCalls(toolCalls, documentIds, fallbackQuery) {
+async function executeToolCalls(toolCalls, documentIds, fallbackQuery, userId) {
   return Promise.all(
     toolCalls.map(async (toolCall) => {
       const stepStart = Date.now();
@@ -131,7 +131,7 @@ async function executeToolCalls(toolCalls, documentIds, fallbackQuery) {
         // this document"-style broadness signal that a narrower phrasing
         // wouldn't have needed in the first place).
         const { query, usedFallback } = resolveSearchQuery(args, fallbackQuery);
-        const result = await runRetrieval(query, documentIds, fallbackQuery);
+        const result = await runRetrieval(query, documentIds, fallbackQuery, userId);
         const chunks = result.chunks || [];
         const summary = chunks.length
           ? `Found ${chunks.length} relevant passage(s): ${chunks
@@ -156,7 +156,7 @@ async function executeToolCalls(toolCalls, documentIds, fallbackQuery) {
       }
 
       if (name === 'list_documents') {
-        const filenames = await listReadyDocuments(documentIds);
+        const filenames = await listReadyDocuments(documentIds, userId);
         const summary = filenames.length
           ? `Available documents: ${filenames.join(', ')}`
           : 'No documents are currently available to search.';
@@ -201,7 +201,7 @@ async function executeToolCalls(toolCalls, documentIds, fallbackQuery) {
  *   independently testable without a live Groq key or network call, which
  *   was previously only exercised by the eval harness and manual testing.
  */
-async function runAgentPlanner(question, history, documentIds, maxSteps = MAX_STEPS, deps = {}) {
+async function runAgentPlanner(question, history, documentIds, maxSteps = MAX_STEPS, deps = {}, userId = null) {
   const doCallPlannerTurn = deps.callPlannerTurn || callPlannerTurn;
   const doExecuteToolCalls = deps.executeToolCalls || executeToolCalls;
 
@@ -240,7 +240,7 @@ async function runAgentPlanner(question, history, documentIds, maxSteps = MAX_ST
     messages.push(msg);
 
     // eslint-disable-next-line no-await-in-loop
-    const results = await doExecuteToolCalls(msg.tool_calls, documentIds, question);
+    const results = await doExecuteToolCalls(msg.tool_calls, documentIds, question, userId);
 
     for (const r of results) {
       for (const c of r.chunks) {
@@ -290,10 +290,17 @@ async function runAgenticRetrieval(question, documentIds, history = [], opts = {
   const maxSteps = opts.maxSteps || MAX_STEPS;
 
   const planStart = Date.now();
-  const plan = await runAgentPlanner(question, history, documentIds, maxSteps, {
-    callPlannerTurn: opts.callPlannerTurn,
-    executeToolCalls: opts.executeToolCalls,
-  });
+  const plan = await runAgentPlanner(
+    question,
+    history,
+    documentIds,
+    maxSteps,
+    {
+      callPlannerTurn: opts.callPlannerTurn,
+      executeToolCalls: opts.executeToolCalls,
+    },
+    opts.userId ?? null
+  );
   const planningMs = Date.now() - planStart;
 
   const traceRaw = {

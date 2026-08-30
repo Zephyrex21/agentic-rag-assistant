@@ -162,7 +162,9 @@ test('GET /api/documents/:id/status - 404s for an unknown document', async (t) =
 
 test('GET /api/documents - lists all documents by default', async (t) => {
   t.mock.method(documentStore, 'list', async (options) => {
-    assert.deepStrictEqual(options, {}); // no folder filter applied
+    // Always scoped by owner now (null = guest, since no auth cookie was
+    // sent) - no folder filter applied beyond that.
+    assert.deepStrictEqual(options, { userId: null });
     return [{ id: 'd1', filename: 'a.pdf', status: 'ready', chunkCount: 3, uploadedAt: 'now', folderId: null }];
   });
 

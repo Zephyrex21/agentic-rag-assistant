@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const fs = require('fs');
 const path = require('path');
 
@@ -9,10 +10,12 @@ const queryRouter = require('./routes/query');
 const conversationsRouter = require('./routes/conversations');
 const foldersRouter = require('./routes/folders');
 const usageRouter = require('./routes/usage');
+const { router: authRouter } = require('./routes/auth');
 const logger = require('./utils/logger');
 const { KNOWN_PROBLEMATIC_MODELS } = require('./services/modelFallback');
 const healthCheck = require('./services/healthCheck');
 const { requireAppAccessKey } = require('./middleware/auth');
+const { attachUser } = require('./middleware/userAuth');
 const { generalLimiter, expensiveLimiter } = require('./middleware/rateLimit');
 
 // Uploads still land on local disk temporarily during processing (deleted after
@@ -36,7 +39,15 @@ const allowedOrigins = (process.env.ALLOWED_ORIGIN || '')
   .split(',')
   .map((o) => o.trim())
   .filter(Boolean);
-app.use(cors(allowedOrigins.length > 0 ? { origin: allowedOrigins } : undefined));
+app.use(cors(allowedOrigins.length > 0 ? { origin: allowedOrigins, credentials: true } : undefined));
+// credentials: true only applies when ALLOWED_ORIGIN is set to specific
+// origin(s) - browsers refuse to send/read cookies cross-origin against a
+// wildcard (*) Access-Control-Allow-Origin regardless of this setting, so
+// user-account sessions (an httpOnly cookie, see routes/auth.js) only work
+// cross-origin once a real ALLOWED_ORIGIN is configured. Same-origin and
+// locally-proxied setups (client/vite.config.ts's dev proxy) are
+// unaffected either way - the browser never applies that restriction to
+// same-origin requests.
 if (allowedOrigins.length === 0 && process.env.NODE_ENV === 'production') {
   console.warn(
     '[app] ALLOWED_ORIGIN is not set in a production environment - accepting cross-origin requests from any site. ' +
@@ -44,6 +55,7 @@ if (allowedOrigins.length === 0 && process.env.NODE_ENV === 'production') {
   );
 }
 app.use(express.json());
+app.use(cookieParser());
 
 // Rate limiting - applied to every /api/* route (see middleware/rateLimit.js
 // for why /health is deliberately excluded: it's a cheap, no-side-effect
@@ -60,6 +72,12 @@ app.use('/api', generalLimiter);
 // /api/* only, after express.json() but before the routers - /health stays
 // open so uptime checks and hosting platforms can poll it without a key.
 app.use('/api', requireAppAccessKey);
+
+// Attaches req.user (or null for a guest) to every /api/* request from
+// here on - see middleware/userAuth.js. Placed after requireAppAccessKey
+// so a request that fails the site-wide key check never pays for the
+// extra DB lookup this does.
+app.use('/api', attachUser);
 
 // Defense in depth: if any route handler ever has an unwrapped async call that
 // throws (like the upload bug this caught during testing), log it loudly instead
@@ -139,6 +157,11 @@ app.use('/api/query', expensiveLimiter, queryRouter);
 app.use('/api/conversations', expensiveLimiter, conversationsRouter);
 app.use('/api/folders', foldersRouter);
 app.use('/api/usage', usageRouter);
+// Signup/login share the expensive limiter (not a dedicated one) - both
+// are lightweight compared to an LLM call, but login specifically needs
+// real protection against brute-forcing a password, and this limiter is
+// already tuned to a reasonable "real person, occasional retries" rate.
+app.use('/api/auth', expensiveLimiter, authRouter);
 
 // Centralized fallback error handler
 app.use((err, req, res, next) => {

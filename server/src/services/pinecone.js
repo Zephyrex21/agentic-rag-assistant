@@ -21,7 +21,13 @@ function getIndex() {
 
 /**
  * Upserts chunk vectors for a document.
- * @param {Array<{id: string, values: number[], metadata: object}>} vectors
+ * @param {Array<{id: string, values: number[], metadata: object}>} vectors -
+ *   each vector's metadata should already include a `userId` field (a real
+ *   id, or the 'guest' sentinel - see ingestionWorker.js) so queryVectors's
+ *   filter can scope to an owner. Pinecone doesn't have a clean way to
+ *   filter on "this field is missing," unlike Postgres's real NULL the
+ *   rest of this codebase uses for the same concept - the 'guest' sentinel
+ *   sidesteps that by always giving the field a concrete, filterable value.
  */
 async function upsertVectors(vectors) {
   const index = getIndex();

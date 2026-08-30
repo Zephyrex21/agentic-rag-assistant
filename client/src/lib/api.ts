@@ -54,6 +54,15 @@ function authHeaders(): Record<string, string> {
   return key ? { 'X-App-Access-Key': key } : {};
 }
 
+// credentials: 'include' on every call below - required for the user-
+// account session cookie (see server/src/routes/auth.js) to actually be
+// sent/received. Harmless for guests (no cookie exists yet, so this is a
+// no-op) and for same-origin/local-dev setups (the browser already sends
+// same-origin cookies regardless) - it only matters once the frontend and
+// backend are on separate domains with a real ALLOWED_ORIGIN configured
+// (see app.js's CORS comment for the other half of that setup).
+const CREDENTIALS: RequestCredentials = 'include';
+
 // Fired whenever a request comes back 401 - a global listener (see
 // AccessKeyGate.tsx) shows a prompt for the key without every individual
 // call site needing to know about this. Deliberately a DOM event, not a
@@ -103,6 +112,51 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return body as T;
 }
 
+// ---------- Account (signup/login/logout) ----------
+//
+// Guest mode needs none of this - every call above/below already works
+// with no session cookie at all, scoped to the shared guest pool exactly
+// as this app always worked (see server/src/middleware/userAuth.js).
+
+export interface AccountUser {
+  id: string;
+  email: string;
+}
+
+export async function signup(email: string, password: string): Promise<{ user: AccountUser }> {
+  const res = await fetch(`${API_BASE}/api/auth/signup`, {
+    method: 'POST',
+    credentials: CREDENTIALS,
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ email, password }),
+  });
+  return handleResponse(res);
+}
+
+export async function login(email: string, password: string): Promise<{ user: AccountUser }> {
+  const res = await fetch(`${API_BASE}/api/auth/login`, {
+    method: 'POST',
+    credentials: CREDENTIALS,
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ email, password }),
+  });
+  return handleResponse(res);
+}
+
+export async function logout(): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/api/auth/logout`, {
+    method: 'POST',
+    credentials: CREDENTIALS,
+    headers: authHeaders(),
+  });
+  return handleResponse(res);
+}
+
+export async function getMe(): Promise<{ user: AccountUser | null }> {
+  const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: CREDENTIALS, headers: authHeaders() });
+  return handleResponse(res);
+}
+
 // ---------- Documents ----------
 
 export async function uploadDocument(
@@ -117,24 +171,36 @@ export async function uploadDocument(
   // Deliberately no Content-Type header here - the browser sets
   // multipart/form-data with the correct boundary itself for FormData
   // bodies; only the access-key header is ours to add.
-  const res = await fetch(`${API_BASE}/api/documents/upload`, { method: 'POST', body: formData, headers: authHeaders() });
+  const res = await fetch(`${API_BASE}/api/documents/upload`, {
+    method: 'POST',
+    credentials: CREDENTIALS,
+    body: formData,
+    headers: authHeaders(),
+  });
   return handleResponse(res);
 }
 
 export async function getDocumentStatus(
   documentId: string
 ): Promise<{ documentId: string; status: string; chunkCount: number; error?: string }> {
-  const res = await fetch(`${API_BASE}/api/documents/${documentId}/status`, { headers: authHeaders() });
+  const res = await fetch(`${API_BASE}/api/documents/${documentId}/status`, {
+    credentials: CREDENTIALS,
+    headers: authHeaders(),
+  });
   return handleResponse(res);
 }
 
 export async function listDocuments(): Promise<{ documents: DocumentSummary[] }> {
-  const res = await fetch(`${API_BASE}/api/documents`, { headers: authHeaders() });
+  const res = await fetch(`${API_BASE}/api/documents`, { credentials: CREDENTIALS, headers: authHeaders() });
   return handleResponse(res);
 }
 
 export async function deleteDocument(documentId: string): Promise<{ success: boolean }> {
-  const res = await fetch(`${API_BASE}/api/documents/${documentId}`, { method: 'DELETE', headers: authHeaders() });
+  const res = await fetch(`${API_BASE}/api/documents/${documentId}`, {
+    method: 'DELETE',
+    credentials: CREDENTIALS,
+    headers: authHeaders(),
+  });
   return handleResponse(res);
 }
 
@@ -144,6 +210,7 @@ export async function moveDocumentToFolder(
 ): Promise<{ id: string; folderId: string | null }> {
   const res = await fetch(`${API_BASE}/api/documents/${documentId}/folder`, {
     method: 'PATCH',
+    credentials: CREDENTIALS,
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ folderId }),
   });
@@ -153,13 +220,14 @@ export async function moveDocumentToFolder(
 // ---------- Folders ----------
 
 export async function listFolders(): Promise<{ folders: Folder[] }> {
-  const res = await fetch(`${API_BASE}/api/folders`, { headers: authHeaders() });
+  const res = await fetch(`${API_BASE}/api/folders`, { credentials: CREDENTIALS, headers: authHeaders() });
   return handleResponse(res);
 }
 
 export async function createFolder(name: string): Promise<{ folder: Folder }> {
   const res = await fetch(`${API_BASE}/api/folders`, {
     method: 'POST',
+    credentials: CREDENTIALS,
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ name }),
   });
@@ -167,29 +235,44 @@ export async function createFolder(name: string): Promise<{ folder: Folder }> {
 }
 
 export async function deleteFolder(folderId: string): Promise<{ success: boolean }> {
-  const res = await fetch(`${API_BASE}/api/folders/${folderId}`, { method: 'DELETE', headers: authHeaders() });
+  const res = await fetch(`${API_BASE}/api/folders/${folderId}`, {
+    method: 'DELETE',
+    credentials: CREDENTIALS,
+    headers: authHeaders(),
+  });
   return handleResponse(res);
 }
 
 // ---------- Conversations ----------
 
 export async function createConversation(): Promise<{ conversationId: string; title: string }> {
-  const res = await fetch(`${API_BASE}/api/conversations`, { method: 'POST', headers: authHeaders() });
+  const res = await fetch(`${API_BASE}/api/conversations`, {
+    method: 'POST',
+    credentials: CREDENTIALS,
+    headers: authHeaders(),
+  });
   return handleResponse(res);
 }
 
 export async function listConversations(): Promise<{ conversations: ConversationSummary[] }> {
-  const res = await fetch(`${API_BASE}/api/conversations`, { headers: authHeaders() });
+  const res = await fetch(`${API_BASE}/api/conversations`, { credentials: CREDENTIALS, headers: authHeaders() });
   return handleResponse(res);
 }
 
 export async function getConversation(conversationId: string): Promise<ConversationDetail> {
-  const res = await fetch(`${API_BASE}/api/conversations/${conversationId}`, { headers: authHeaders() });
+  const res = await fetch(`${API_BASE}/api/conversations/${conversationId}`, {
+    credentials: CREDENTIALS,
+    headers: authHeaders(),
+  });
   return handleResponse(res);
 }
 
 export async function deleteConversation(conversationId: string): Promise<{ success: boolean }> {
-  const res = await fetch(`${API_BASE}/api/conversations/${conversationId}`, { method: 'DELETE', headers: authHeaders() });
+  const res = await fetch(`${API_BASE}/api/conversations/${conversationId}`, {
+    method: 'DELETE',
+    credentials: CREDENTIALS,
+    headers: authHeaders(),
+  });
   return handleResponse(res);
 }
 
@@ -296,6 +379,7 @@ async function postStream(url: string, body: object, callbacks: StreamCallbacks)
   try {
     res = await fetch(url, {
       method: 'POST',
+      credentials: CREDENTIALS,
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify(body),
     });
@@ -347,6 +431,7 @@ export async function applyRevision(
 ): Promise<Message> {
   const res = await fetch(`${API_BASE}/api/conversations/${conversationId}/messages/${messageId}/revision`, {
     method: 'PATCH',
+    credentials: CREDENTIALS,
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(revision),
   });

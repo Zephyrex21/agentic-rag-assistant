@@ -1,8 +1,10 @@
-import { type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageSquare, FileText, Home } from 'lucide-react';
+import { MessageSquare, FileText, Home, LogIn, LogOut, User } from 'lucide-react';
 import { LogoMark } from '../LogoMark';
 import { ThemeToggle } from '../ThemeToggle';
+import { AuthModal } from '../auth/AuthModal';
+import { useAuth } from '../../context/AuthContext';
 
 export type SidebarTab = 'chats' | 'documents';
 
@@ -16,6 +18,9 @@ interface SidebarProps {
 }
 
 export function Sidebar({ chatsSlot, documentsSlot, newConversationSlot, tab, onTabChange, onGoHome }: SidebarProps) {
+  const { user, logout } = useAuth();
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+
   return (
     <div className="flex h-full w-full flex-col bg-surface">
       <div className="flex items-center justify-between px-5 pt-5">
@@ -44,6 +49,44 @@ export function Sidebar({ chatsSlot, documentsSlot, newConversationSlot, tab, on
           <span>⌘</span>K
         </kbd>
       </div>
+
+      {/* Account status - guest mode needs no account at all (see
+          AuthContext.tsx); this is purely an opt-in affordance. A logged-in
+          person's email is shown so it's always clear whose documents/
+          conversations are currently in view. */}
+      <div className="mx-5 mt-3 flex items-center justify-between rounded-xl border border-border-subtle bg-background px-3 py-2">
+        {user ? (
+          <>
+            <span className="flex min-w-0 items-center gap-2 text-[13px] text-ink">
+              <User size={13} className="shrink-0 text-accent" />
+              <span className="truncate">{user.email}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => logout()}
+              aria-label="Log out"
+              title="Log out"
+              className="flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-[11px] text-ink-muted transition-colors hover:text-highlight cursor-pointer"
+            >
+              <LogOut size={12} />
+              Log out
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="text-[13px] text-ink-muted">Browsing as guest</span>
+            <button
+              type="button"
+              onClick={() => setAuthModalOpen(true)}
+              className="flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium text-accent transition-opacity hover:opacity-80 cursor-pointer"
+            >
+              <LogIn size={12} />
+              Sign in
+            </button>
+          </>
+        )}
+      </div>
+      <AuthModal open={authModalOpen} onOpenChange={setAuthModalOpen} />
 
       <div className="px-5 pt-4">{newConversationSlot}</div>
 
