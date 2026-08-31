@@ -5,6 +5,7 @@ import { ThemeToggle } from '../ThemeToggle';
 import { LogoMark } from '../LogoMark';
 import { SignalBackground } from './signal-field/SignalBackground';
 import { FeaturesSection } from './FeaturesSection';
+import { Footer } from './Footer';
 
 const container: Variants = {
   hidden: {},
@@ -194,6 +195,7 @@ export function Hero({ onEnter }: { onEnter: () => void }) {
       </div>
 
       <FeaturesSection />
+      <Footer />
     </div>
   );
 }
