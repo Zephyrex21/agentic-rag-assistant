@@ -7,6 +7,14 @@ import { useAuth } from '../../context/AuthContext';
 interface AuthModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  // When true: no "Continue as guest" escape hatch, and Escape/outside-click
+  // no longer close the modal - used when a guest has hit the free-question
+  // limit (see GuestLimitGate.tsx) and signing in is no longer optional for
+  // that session. Purely a UI presentation choice - the actual enforcement
+  // lives server-side (guestQueryLimit.js keeps blocking with a 403
+  // regardless of what the client does), so this never needs to be treated
+  // as a security boundary on its own.
+  forced?: boolean;
 }
 
 /**
@@ -16,7 +24,7 @@ interface AuthModalProps {
  * everything already in the guest pool stays exactly where it was, visible
  * again the moment someone logs back out.
  */
-export function AuthModal({ open, onOpenChange }: AuthModalProps) {
+export function AuthModal({ open, onOpenChange, forced = false }: AuthModalProps) {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -41,8 +49,14 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
     clearAuthError();
   };
 
+  // When forced, swallow the interactions Radix's Dialog would otherwise
+  // use to close itself - the only way out is actually signing in.
+  const preventIfForced = (e: { preventDefault: () => void }) => {
+    if (forced) e.preventDefault();
+  };
+
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root open={open} onOpenChange={forced ? undefined : onOpenChange}>
       <AnimatePresence>
         {open && (
           <Dialog.Portal forceMount>
@@ -55,7 +69,13 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
                 className="signal-theme fixed inset-0 z-[100] bg-overlay"
               />
             </Dialog.Overlay>
-            <Dialog.Content asChild aria-describedby={undefined}>
+            <Dialog.Content
+              asChild
+              aria-describedby={undefined}
+              onEscapeKeyDown={preventIfForced}
+              onPointerDownOutside={preventIfForced}
+              onInteractOutside={preventIfForced}
+            >
               <motion.div
                 initial={{ opacity: 0, scale: 0.96, y: -8 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -65,12 +85,14 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
                 style={{ background: 'var(--surface)', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-xl)' }}
               >
                 <Dialog.Title className="font-signal-display text-2xl italic text-ink">
-                  {mode === 'login' ? 'Welcome back' : 'Create an account'}
+                  {forced ? "You're out of free questions" : mode === 'login' ? 'Welcome back' : 'Create an account'}
                 </Dialog.Title>
                 <p className="mt-1.5 text-[13px] text-ink-muted">
-                  {mode === 'login'
-                    ? 'Sign in to see your own documents and conversation history.'
-                    : 'Your documents and conversations stay private to your account.'}
+                  {forced
+                    ? 'Guest mode is limited to a couple of questions. Sign in (it takes a few seconds) to keep this conversation going - your guest history stays right where it is.'
+                    : mode === 'login'
+                      ? 'Sign in to see your own documents and conversation history.'
+                      : 'Your documents and conversations stay private to your account.'}
                 </p>
 
                 <form onSubmit={submit} className="mt-5 flex flex-col gap-3">
@@ -142,13 +164,15 @@ export function AuthModal({ open, onOpenChange }: AuthModalProps) {
                   )}
                 </p>
 
-                <button
-                  type="button"
-                  onClick={() => onOpenChange(false)}
-                  className="mt-3 w-full cursor-pointer text-center text-[12px] text-ink-muted hover:text-ink"
-                >
-                  Continue as guest
-                </button>
+                {!forced && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenChange(false)}
+                    className="mt-3 w-full cursor-pointer text-center text-[12px] text-ink-muted hover:text-ink"
+                  >
+                    Continue as guest
+                  </button>
+                )}
               </motion.div>
             </Dialog.Content>
           </Dialog.Portal>

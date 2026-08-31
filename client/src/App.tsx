@@ -9,6 +9,7 @@ import { GrainOverlay } from './components/GrainOverlay';
 import { AmbientBackground } from './components/AmbientBackground';
 import { ColdStartNotice } from './components/ColdStartNotice';
 import { AccessKeyGate } from './components/AccessKeyGate';
+import { GuestLimitGate } from './components/GuestLimitGate';
 import { LogoMark } from './components/LogoMark';
 
 // Split out of the initial bundle - see MainAppView.tsx for why. The
@@ -68,6 +69,7 @@ function App() {
               <GrainOverlay />
               <ColdStartNotice />
               <AccessKeyGate />
+              <GuestLimitGate />
               <AppContent />
             </ConversationsProvider>
           </DocumentsProvider>

@@ -15,6 +15,7 @@ import {
   sendMessageStream,
 } from '../lib/api';
 import { withRetry } from '../lib/retry';
+import { useAuth } from './AuthContext';
 import type { ConversationDetail, ConversationSummary, Message } from '../lib/types';
 
 interface ConversationsContextValue {
@@ -68,6 +69,7 @@ function makeId() {
 }
 
 export function ConversationsProvider({ children }: { children: ReactNode }) {
+  const { setGuestQueriesRemaining } = useAuth();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -235,6 +237,12 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
               pipelineTrace: result.trace,
               isStreaming: false,
             });
+            // Guest-only - null for a signed-in user (see AuthContext /
+            // guestQueryLimit.js). Keeps the count live without a separate
+            // /me refetch after every message.
+            if (result.guestQueriesRemaining !== undefined) {
+              setGuestQueriesRemaining(result.guestQueriesRemaining);
+            }
             refreshList();
             setSending(false);
           },
@@ -281,7 +289,7 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
         setSending(false);
       }
     },
-    [activeConversationId, refreshList, scopeByConversation]
+    [activeConversationId, refreshList, scopeByConversation, setGuestQueriesRemaining]
   );
 
   const dismissRevision = useCallback((messageId: string) => {

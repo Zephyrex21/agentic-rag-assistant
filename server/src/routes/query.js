@@ -2,6 +2,7 @@ const express = require('express');
 const { randomUUID } = require('crypto');
 
 const rag = require('../services/rag');
+const { enforceGuestQueryLimit } = require('../middleware/guestQueryLimit');
 
 const router = express.Router();
 
@@ -16,7 +17,7 @@ function writeSseEvent(res, event, data) {
 // POST /api/query - stateless, single-turn Q&A (no conversation memory).
 // Streams via SSE. For multi-turn conversations, use
 // POST /api/conversations/:id/messages instead.
-router.post('/', async (req, res) => {
+router.post('/', enforceGuestQueryLimit, async (req, res) => {
   const { question, documentIds } = req.body || {};
 
   if (!question || typeof question !== 'string' || !question.trim()) {
@@ -57,6 +58,7 @@ router.post('/', async (req, res) => {
           wasRevised: false,
           trace: event.trace ?? null,
           queryId,
+          guestQueriesRemaining: req.guestQueriesRemaining ?? null,
         });
       } else if (event.type === 'done') {
         // The first answer is final right now - send it immediately rather
@@ -69,6 +71,7 @@ router.post('/', async (req, res) => {
           wasRevised: false,
           trace: event.trace ?? null,
           queryId,
+          guestQueriesRemaining: req.guestQueriesRemaining ?? null,
         });
       } else if (event.type === 'verified') {
         // Background verification passed - nothing about the visible

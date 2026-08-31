@@ -79,6 +79,21 @@ export function onAccessRequired(handler: () => void): () => void {
   return () => window.removeEventListener(ACCESS_REQUIRED_EVENT, handler);
 }
 
+// Fired whenever a request comes back 403 with code GUEST_LIMIT_REACHED
+// (see server/src/middleware/guestQueryLimit.js) - a global listener (see
+// GuestLimitGate.tsx) forces the sign-in modal open, the same event-bus
+// pattern as ACCESS_REQUIRED_EVENT above.
+const GUEST_LIMIT_EVENT = 'app-guest-limit-reached';
+
+function notifyGuestLimitReached() {
+  window.dispatchEvent(new CustomEvent(GUEST_LIMIT_EVENT));
+}
+
+export function onGuestLimitReached(handler: () => void): () => void {
+  window.addEventListener(GUEST_LIMIT_EVENT, handler);
+  return () => window.removeEventListener(GUEST_LIMIT_EVENT, handler);
+}
+
 export class ApiError extends Error {
   code: string;
   status: number;
@@ -103,8 +118,9 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
   if (!res.ok) {
     if (res.status === 401) notifyAccessRequired();
-    const message = body?.error?.message || `Request failed with status ${res.status}`;
     const code = body?.error?.code || 'UNKNOWN_ERROR';
+    if (code === 'GUEST_LIMIT_REACHED') notifyGuestLimitReached();
+    const message = body?.error?.message || `Request failed with status ${res.status}`;
     const { code: _code, message: _message, ...details } = body?.error || {};
     throw new ApiError(message, code, res.status, Object.keys(details).length > 0 ? details : undefined);
   }
@@ -152,7 +168,13 @@ export async function logout(): Promise<{ success: boolean }> {
   return handleResponse(res);
 }
 
-export async function getMe(): Promise<{ user: AccountUser | null }> {
+export async function getMe(): Promise<{
+  user: AccountUser | null;
+  // Both null for a signed-in user - only meaningful for a guest. See
+  // server/src/middleware/guestQueryLimit.js.
+  guestQueriesRemaining: number | null;
+  guestQueryLimit: number | null;
+}> {
   const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: CREDENTIALS, headers: authHeaders() });
   return handleResponse(res);
 }
@@ -295,6 +317,9 @@ export interface StreamDoneResult {
   verified?: boolean | null;
   wasRevised?: boolean;
   trace?: PipelineTrace | null;
+  // null for a signed-in user; for a guest, how many free questions are
+  // left after this one. See server/src/middleware/guestQueryLimit.js.
+  guestQueriesRemaining?: number | null;
 }
 
 export interface StreamVerifiedResult {
@@ -393,6 +418,7 @@ async function postStream(url: string, body: object, callbacks: StreamCallbacks)
   if (!res.ok) {
     if (res.status === 401) notifyAccessRequired();
     const errBody = await res.json().catch(() => null);
+    if (errBody?.error?.code === 'GUEST_LIMIT_REACHED') notifyGuestLimitReached();
     callbacks.onError?.(errBody?.error?.message || `Request failed with status ${res.status}`);
     return;
   }

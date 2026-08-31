@@ -16,6 +16,7 @@ const { KNOWN_PROBLEMATIC_MODELS } = require('./services/modelFallback');
 const healthCheck = require('./services/healthCheck');
 const { requireAppAccessKey } = require('./middleware/auth');
 const { attachUser } = require('./middleware/userAuth');
+const { attachGuestId } = require('./middleware/guestQueryLimit');
 const { generalLimiter, expensiveLimiter } = require('./middleware/rateLimit');
 
 // Uploads still land on local disk temporarily during processing (deleted after
@@ -78,6 +79,14 @@ app.use('/api', requireAppAccessKey);
 // so a request that fails the site-wide key check never pays for the
 // extra DB lookup this does.
 app.use('/api', attachUser);
+
+// Assigns a stable httpOnly guest id cookie to any request that isn't
+// already signed in - see middleware/guestQueryLimit.js. Placed right
+// after attachUser so req.user is already resolved (a signed-in request
+// skips this entirely) and before any route that might want to read
+// req.guestId (currently just GET /api/auth/me, for reporting remaining
+// free questions without consuming one).
+app.use('/api', attachGuestId);
 
 // Defense in depth: if any route handler ever has an unwrapped async call that
 // throws (like the upload bug this caught during testing), log it loudly instead

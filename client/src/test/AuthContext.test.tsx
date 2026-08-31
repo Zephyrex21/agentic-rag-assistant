@@ -19,7 +19,7 @@ function Probe() {
 
 describe('AuthContext', () => {
   it('defaults to guest (user: null) when there is no session', async () => {
-    vi.mocked(getMe).mockResolvedValue({ user: null });
+    vi.mocked(getMe).mockResolvedValue({ user: null, guestQueriesRemaining: 2, guestQueryLimit: 2 });
     render(
       <AuthProvider>
         <Probe />
@@ -29,7 +29,7 @@ describe('AuthContext', () => {
   });
 
   it('reflects a logged-in user once getMe resolves one', async () => {
-    vi.mocked(getMe).mockResolvedValue({ user: { id: 'u1', email: 'person@example.com' } });
+    vi.mocked(getMe).mockResolvedValue({ user: { id: 'u1', email: 'person@example.com' }, guestQueriesRemaining: null, guestQueryLimit: null });
     render(
       <AuthProvider>
         <Probe />

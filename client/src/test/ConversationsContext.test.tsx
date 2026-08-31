@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ConversationsProvider, useConversations } from '../context/ConversationsContext';
+import { AuthProvider } from '../context/AuthContext';
 import type { StreamCallbacks } from '../lib/api';
 
 // A controllable "server" - lets the test decide exactly when each SSE
@@ -12,6 +13,11 @@ let capturedCallbacks: StreamCallbacks | null = null;
 let resolveStream: (() => void) | null = null;
 
 vi.mock('../lib/api', () => ({
+  // ConversationsProvider now reads guestQueriesRemaining from AuthContext
+  // (see its onDone handler), which in turn boots from getMe() - mocked
+  // here as "signed in, nothing guest-related to report" so these tests
+  // (which aren't about the guest limit) aren't affected by it.
+  getMe: vi.fn(async () => ({ user: null, guestQueriesRemaining: null, guestQueryLimit: null })),
   listConversations: vi.fn(async () => ({ conversations: [] })),
   createConversation: vi.fn(async () => ({ conversationId: 'c1', title: 'New conversation' })),
   getConversation: vi.fn(async () => ({ id: 'c1', title: 'New conversation', createdAt: '', messages: [] })),
@@ -43,14 +49,17 @@ function TestHarness() {
   );
 }
 
+// ConversationsProvider reads useAuth() (for guestQueriesRemaining) - see
+// its own file - so it must be rendered inside an AuthProvider now, same as
+// it is for real in App.tsx.
+function renderWithProviders(children: React.ReactNode) {
+  return render(<AuthProvider><ConversationsProvider>{children}</ConversationsProvider></AuthProvider>);
+}
+
 describe('ConversationsContext - sending unblocks at done, not at stream close', () => {
   it('clears `sending` as soon as onDone fires, even while the underlying request is still open for background verification', async () => {
     const user = userEvent.setup();
-    render(
-      <ConversationsProvider>
-        <TestHarness />
-      </ConversationsProvider>
-    );
+    renderWithProviders(<TestHarness />);
 
     await user.click(screen.getByText('create'));
     await waitFor(() => expect(screen.getByTestId('active-id')).toHaveTextContent('c1'));
@@ -84,11 +93,7 @@ describe('ConversationsContext - sending unblocks at done, not at stream close',
 
   it('also clears `sending` on an error that arrives before done', async () => {
     const user = userEvent.setup();
-    render(
-      <ConversationsProvider>
-        <TestHarness />
-      </ConversationsProvider>
-    );
+    renderWithProviders(<TestHarness />);
 
     await user.click(screen.getByText('create'));
     await waitFor(() => expect(screen.getByTestId('active-id')).toHaveTextContent('c1'));

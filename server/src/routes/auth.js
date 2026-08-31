@@ -2,6 +2,7 @@ const express = require('express');
 const userStore = require('../db/userStore');
 const { signToken, TOKEN_TTL } = require('../services/authTokens');
 const { COOKIE_NAME } = require('../middleware/userAuth');
+const { getGuestQueriesRemaining, GUEST_QUERY_LIMIT } = require('../middleware/guestQueryLimit');
 
 const router = express.Router();
 
@@ -85,9 +86,16 @@ router.post('/logout', (req, res) => {
 // GET /api/auth/me - returns the current session's user, or null for a guest.
 // Never errors on a missing/invalid session (see attachUser's own
 // fail-soft behavior) - this endpoint's whole job is just to report
-// whichever of the two attachUser already decided.
+// whichever of the two attachUser already decided. For a guest, also
+// reports how many free questions are left (a read-only lookup - never
+// consumes one), so the UI can show this up front on load instead of only
+// ever finding out via a sudden 403 on the next message.
 router.get('/me', (req, res) => {
-  res.json({ user: req.user });
+  res.json({
+    user: req.user,
+    guestQueriesRemaining: req.user ? null : getGuestQueriesRemaining(req.guestId),
+    guestQueryLimit: req.user ? null : GUEST_QUERY_LIMIT,
+  });
 });
 
 module.exports = { router, TOKEN_TTL };

@@ -3,6 +3,7 @@ const express = require('express');
 const conversationStore = require('../db/conversationStore');
 const rag = require('../services/rag');
 const { parseIntEnv } = require('../utils/envConfig');
+const { enforceGuestQueryLimit } = require('../middleware/guestQueryLimit');
 
 const router = express.Router();
 
@@ -86,7 +87,7 @@ router.get('/:id', async (req, res) => {
 // question, unknown conversation) still happen as plain JSON responses
 // BEFORE we commit to streaming - only once we're actually generating does
 // the response switch into SSE mode.
-router.post('/:id/messages', async (req, res) => {
+router.post('/:id/messages', enforceGuestQueryLimit, async (req, res) => {
   const { question, documentIds } = req.body || {};
   const conversationId = req.params.id;
   const userId = ownerId(req);
@@ -154,6 +155,7 @@ router.post('/:id/messages', async (req, res) => {
           verified: true,
           wasRevised: false,
           trace: event.trace ?? null,
+          guestQueriesRemaining: req.guestQueriesRemaining ?? null,
         });
       } else if (event.type === 'done') {
         // The first answer is final right now - persist and send it
@@ -179,6 +181,7 @@ router.post('/:id/messages', async (req, res) => {
           verified: event.verified,
           wasRevised: false,
           trace: event.trace ?? null,
+          guestQueriesRemaining: req.guestQueriesRemaining ?? null,
         });
       } else if (event.type === 'verified') {
         // Background verification passed - update the already-persisted

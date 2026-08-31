@@ -6,6 +6,13 @@ interface AuthContextValue {
   user: AccountUser | null;
   loading: boolean;
   authError: string | null;
+  // null for a signed-in user; for a guest, how many free questions remain.
+  // Set once from GET /api/auth/me on load, then kept live by
+  // ConversationsContext feeding each answer's guestQueriesRemaining back
+  // in via setGuestQueriesRemaining - see its sendMessage.
+  guestQueriesRemaining: number | null;
+  guestQueryLimit: number | null;
+  setGuestQueriesRemaining: (remaining: number | null) => void;
   signup: (email: string, password: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -18,6 +25,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AccountUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [guestQueriesRemaining, setGuestQueriesRemaining] = useState<number | null>(null);
+  const [guestQueryLimit, setGuestQueryLimit] = useState<number | null>(null);
 
   useEffect(() => {
     // One retry after a short delay - same startup-race smoothing every
@@ -26,7 +35,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // an actual failure would look, so there's nothing further to surface
     // to the person if this never succeeds - it just quietly stays a guest.
     withRetry(getMe)
-      .then(({ user }) => setUser(user))
+      .then(({ user, guestQueriesRemaining, guestQueryLimit }) => {
+        setUser(user);
+        setGuestQueriesRemaining(guestQueriesRemaining);
+        setGuestQueryLimit(guestQueryLimit);
+      })
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
   }, []);
@@ -78,7 +91,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, authError, signup, login, logout, clearAuthError }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        authError,
+        guestQueriesRemaining,
+        guestQueryLimit,
+        setGuestQueriesRemaining,
+        signup,
+        login,
+        logout,
+        clearAuthError,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
