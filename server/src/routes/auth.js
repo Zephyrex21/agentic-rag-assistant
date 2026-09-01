@@ -59,6 +59,16 @@ router.post('/otp/request', async (req, res) => {
   }
   const normalizedEmail = email.trim().toLowerCase();
 
+  // Split into two separately-caught steps (store, then send) rather than
+  // one try/catch around both - a single generic "something went wrong"
+  // for either failure is genuinely hard to debug from outside (no direct
+  // log access), so which STAGE failed is worth surfacing distinctly:
+  // OTP_STORE_FAILED almost always means migration_008_email_otp_auth.sql
+  // hasn't been run against this Supabase project yet (the otp_codes table
+  // doesn't exist), while OTP_EMAIL_FAILED points at the SMTP_* env vars
+  // instead. Same two failure modes either way, but conflating them into
+  // one message means guessing which one to even go fix first.
+  let code;
   try {
     const existing = await otpStore.findByEmail(normalizedEmail);
     if (existing) {
@@ -75,19 +85,40 @@ router.post('/otp/request', async (req, res) => {
       }
     }
 
-    const code = otp.generateCode();
+    code = otp.generateCode();
     await otpStore.upsert({
       email: normalizedEmail,
       codeHash: otp.hashCode(code),
       expiresAt: new Date(Date.now() + OTP_EXPIRY_MS).toISOString(),
     });
-    await emailService.sendOtpEmail(normalizedEmail, code);
-
-    res.json({ sent: true, expiresInSeconds: OTP_EXPIRY_MS / 1000 });
   } catch (err) {
-    console.error('[auth] otp/request failed:', err.message);
-    errorResponse(res, 500, 'OTP_SEND_FAILED', 'Something went wrong sending your code. Please try again.');
+    console.error('[auth] otp/request - storing the code failed:', err.message);
+    // Postgres error 42P01 ("undefined_table") / a message mentioning a
+    // missing relation is exactly what a not-yet-run migration looks like.
+    const looksLikeMissingTable = /relation .* does not exist|42P01/i.test(err.message || '');
+    return errorResponse(
+      res,
+      500,
+      'OTP_STORE_FAILED',
+      looksLikeMissingTable
+        ? "The server's database isn't fully set up yet (the otp_codes table is missing). If you're the site owner: run migration_008_email_otp_auth.sql against your Supabase project, then try again."
+        : 'Something went wrong saving your code. Please try again shortly.'
+    );
   }
+
+  try {
+    await emailService.sendOtpEmail(normalizedEmail, code);
+  } catch (err) {
+    console.error('[auth] otp/request - sending the email failed:', err.message);
+    return errorResponse(
+      res,
+      500,
+      'OTP_EMAIL_FAILED',
+      "Your code was generated but the email failed to send. If you're the site owner: double-check SMTP_HOST/SMTP_USER/SMTP_PASS (and that 2-Step Verification + the App Password are still active) in your server's env vars."
+    );
+  }
+
+  res.json({ sent: true, expiresInSeconds: OTP_EXPIRY_MS / 1000 });
 });
 
 // POST /api/auth/otp/verify - the only place an account actually gets

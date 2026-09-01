@@ -4,19 +4,30 @@ const { parseIntEnv } = require('../utils/envConfig');
 let transporter = null;
 let loggedDevModeWarning = false;
 
+// Trimmed - copy-pasting a value into Render's (or any) env var UI
+// picking up a stray leading/trailing space or newline is a genuinely
+// common way for "I definitely typed this right" SMTP creds to still fail
+// auth, and it fails SILENTLY (no clear "invalid character" error, just a
+// rejected login) - trimming here removes an entire class of "it must be
+// my password" debugging dead ends for free.
+function readEnv(name) {
+  const value = process.env[name];
+  return typeof value === 'string' ? value.trim() : value;
+}
+
 function isConfigured() {
-  return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  return Boolean(readEnv('SMTP_HOST') && readEnv('SMTP_USER') && readEnv('SMTP_PASS'));
 }
 
 function getTransporter() {
   if (!transporter) {
     transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
+      host: readEnv('SMTP_HOST'),
       port: parseIntEnv('SMTP_PORT', 587),
       // true for port 465 (implicit TLS), false for 587/others (STARTTLS,
       // which nodemailer negotiates automatically) - see .env.example.
-      secure: process.env.SMTP_SECURE === 'true',
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+      secure: readEnv('SMTP_SECURE') === 'true',
+      auth: { user: readEnv('SMTP_USER'), pass: readEnv('SMTP_PASS') },
     });
   }
   return transporter;
@@ -33,6 +44,12 @@ function getTransporter() {
  * to leave relied-on in a real deployment - anyone with server log access
  * (not just the account holder) could read every code, which defeats the
  * entire point of emailing it. See the SMTP_HOST comment in .env.example.
+ *
+ * Any failure here (auth rejected, wrong port/secure combination, etc.) is
+ * intentionally left to throw straight out to the caller (routes/auth.js)
+ * rather than being swallowed - that's what lets the route tell the
+ * difference between "the DB write failed" and "the email itself failed"
+ * and return a message that actually points at the right thing to check.
  */
 async function sendOtpEmail(email, code) {
   if (!isConfigured()) {
@@ -47,7 +64,7 @@ async function sendOtpEmail(email, code) {
     return;
   }
 
-  const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+  const from = readEnv('SMTP_FROM') || readEnv('SMTP_USER');
   await getTransporter().sendMail({
     from,
     to: email,

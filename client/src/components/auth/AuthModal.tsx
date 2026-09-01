@@ -7,9 +7,20 @@ import { useAuth } from '../../context/AuthContext';
 const CODE_LENGTH = 6;
 const RESEND_COOLDOWN_SECONDS = 45; // mirrors server/src/routes/auth.js's RESEND_COOLDOWN_MS
 
+export type AuthMode = 'signin' | 'signup';
+
 interface AuthModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  // Which of the two entry points opened the modal - purely a copy/label
+  // choice (see MODE_COPY below). The underlying request/verify calls are
+  // byte-for-byte identical either way: there's no separate "create
+  // account" endpoint, because a first-time email's successful verify
+  // transparently becomes an account server-side (see
+  // server/src/routes/auth.js's /otp/verify). A person can freely switch
+  // between the two via the toggle link at the bottom of step one - it
+  // only changes what's on screen, never what request gets sent.
+  initialMode?: AuthMode;
   // When true: no "Continue as guest" escape hatch, and Escape/outside-click
   // no longer close the modal - used when a guest has hit the free-question
   // limit (see GuestLimitGate.tsx) and signing in is no longer optional for
@@ -20,20 +31,37 @@ interface AuthModalProps {
   forced?: boolean;
 }
 
+const MODE_COPY: Record<AuthMode, { title: string; subtitle: string; codeSubtitle: (email: string) => string; toggleLabel: string }> = {
+  signin: {
+    title: 'Sign in',
+    subtitle: "No password to remember - enter your email and we'll send you a 6-digit code.",
+    codeSubtitle: (email) => `We sent a 6-digit code to ${email}. It expires in 10 minutes.`,
+    toggleLabel: 'New here? Create an account',
+  },
+  signup: {
+    title: 'Create your account',
+    subtitle: "No password to set - enter your email and we'll send a 6-digit code to verify it.",
+    codeSubtitle: (email) => `We sent a 6-digit code to ${email} to finish creating your account.`,
+    toggleLabel: 'Already have an account? Sign in',
+  },
+};
+
 /**
- * Passwordless: two steps, always the same two steps whether this is
- * someone's first time or their hundredth - request a code, enter the
- * code. There's no separate "sign up" flow because there's no password to
- * set; a first-time email's successful verify transparently becomes an
- * account server-side (see server/src/routes/auth.js's /otp/verify).
+ * Passwordless, and deliberately ONE flow under the hood (request a code,
+ * verify it) - but presented as the two entry points people expect (Sign
+ * in / Sign up), toggleable from either side, since that's the mental
+ * model most people bring in even when the backend has no reason to
+ * distinguish them. See MODE_COPY above for exactly what differs (labels
+ * only) and server/src/routes/auth.js for why nothing else needs to.
  *
  * Guest mode needs none of this - this modal is purely opt-in, reachable
- * from Sidebar's "Sign in" affordance (or forced open by GuestLimitGate).
- * Signing in scopes future documents/conversations to the account;
- * everything already in the guest pool stays exactly where it was, visible
- * again the moment someone logs back out.
+ * from Sidebar's "Sign in"/"Sign up" affordances (or forced open by
+ * GuestLimitGate). Signing in scopes future documents/conversations to the
+ * account; everything already in the guest pool stays exactly where it
+ * was, visible again the moment someone logs back out.
  */
-export function AuthModal({ open, onOpenChange, forced = false }: AuthModalProps) {
+export function AuthModal({ open, onOpenChange, initialMode = 'signin', forced = false }: AuthModalProps) {
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   const [step, setStep] = useState<'email' | 'code'>('email');
   const [email, setEmail] = useState('');
   const [digits, setDigits] = useState<string[]>(Array(CODE_LENGTH).fill(''));
@@ -53,14 +81,17 @@ export function AuthModal({ open, onOpenChange, forced = false }: AuthModalProps
   }, [resendCooldown]);
 
   // Every open (including a re-open after a previous close) starts back at
-  // step one with a clean slate - carrying over a half-entered code from a
-  // previous attempt would be confusing, not convenient.
+  // step one, in whichever mode it was opened with, with a clean slate -
+  // carrying over a half-entered code or a stale mode from a previous
+  // attempt would be confusing, not convenient.
   useEffect(() => {
     if (open) {
+      setMode(initialMode);
       setStep('email');
       setDigits(Array(CODE_LENGTH).fill(''));
       setResendCooldown(0);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const sendCode = async (e?: FormEvent) => {
@@ -133,11 +164,18 @@ export function AuthModal({ open, onOpenChange, forced = false }: AuthModalProps
     clearAuthError();
   };
 
+  const toggleMode = () => {
+    setMode((m) => (m === 'signin' ? 'signup' : 'signin'));
+    clearAuthError();
+  };
+
   // When forced, swallow the interactions Radix's Dialog would otherwise
   // use to close itself - the only way out is actually signing in.
   const preventIfForced = (e: { preventDefault: () => void }) => {
     if (forced) e.preventDefault();
   };
+
+  const copy = MODE_COPY[mode];
 
   return (
     <Dialog.Root open={open} onOpenChange={forced ? undefined : onOpenChange}>
@@ -171,12 +209,12 @@ export function AuthModal({ open, onOpenChange, forced = false }: AuthModalProps
                 {step === 'email' ? (
                   <>
                     <Dialog.Title className="font-signal-display text-2xl italic text-ink">
-                      {forced ? "You're out of free questions" : 'Sign in'}
+                      {forced ? "You're out of free questions" : copy.title}
                     </Dialog.Title>
                     <p className="mt-1.5 text-[13px] text-ink-muted">
                       {forced
                         ? "Guest mode is limited to a couple of questions. Enter your email and we'll send you a one-time code - your guest history stays right where it is."
-                        : "No password to remember - enter your email and we'll send you a 6-digit code."}
+                        : copy.subtitle}
                     </p>
 
                     <form onSubmit={sendCode} className="mt-5 flex flex-col gap-3">
@@ -216,6 +254,12 @@ export function AuthModal({ open, onOpenChange, forced = false }: AuthModalProps
                       </button>
                     </form>
 
+                    <p className="mt-4 text-center text-[13px] text-ink-muted">
+                      <button type="button" onClick={toggleMode} className="cursor-pointer font-medium text-accent">
+                        {copy.toggleLabel}
+                      </button>
+                    </p>
+
                     {!forced && (
                       <button
                         type="button"
@@ -238,9 +282,7 @@ export function AuthModal({ open, onOpenChange, forced = false }: AuthModalProps
                     </button>
 
                     <Dialog.Title className="font-signal-display text-2xl italic text-ink">Enter your code</Dialog.Title>
-                    <p className="mt-1.5 text-[13px] text-ink-muted">
-                      We sent a 6-digit code to <span className="text-ink">{email.trim()}</span>. It expires in 10 minutes.
-                    </p>
+                    <p className="mt-1.5 text-[13px] text-ink-muted">{copy.codeSubtitle(email.trim())}</p>
 
                     <div className="mt-5 flex justify-between gap-2">
                       {digits.map((d, i) => (

@@ -45,6 +45,36 @@ test('POST /api/auth/otp/request - generates a code, emails it, and stores only 
   assert.notStrictEqual(storedArgs.codeHash, sentCode, 'FAIL: the raw code itself must never be what gets stored');
 });
 
+test('POST /api/auth/otp/request - a database failure (e.g. missing migration) is reported as OTP_STORE_FAILED, distinct from an email failure', async (t) => {
+  t.mock.method(otpStore, 'findByEmail', async () => null);
+  t.mock.method(otpStore, 'upsert', async () => {
+    throw new Error('relation "otp_codes" does not exist');
+  });
+  let emailAttempted = false;
+  t.mock.method(emailService, 'sendOtpEmail', async () => {
+    emailAttempted = true;
+  });
+
+  const res = await request(app).post('/api/auth/otp/request').send({ email: 'new@example.com' });
+  assert.strictEqual(res.status, 500);
+  assert.strictEqual(res.body.error.code, 'OTP_STORE_FAILED');
+  assert.match(res.body.error.message, /migration_008/, 'FAIL: a missing-table error should point at the migration to run');
+  assert.strictEqual(emailAttempted, false, 'FAIL: should never attempt to send an email for a code that was never stored');
+});
+
+test('POST /api/auth/otp/request - an email-send failure (e.g. bad SMTP creds) is reported as OTP_EMAIL_FAILED, not OTP_STORE_FAILED', async (t) => {
+  t.mock.method(otpStore, 'findByEmail', async () => null);
+  t.mock.method(otpStore, 'upsert', async () => {});
+  t.mock.method(emailService, 'sendOtpEmail', async () => {
+    throw new Error('Invalid login: 535-5.7.8 Username and Password not accepted');
+  });
+
+  const res = await request(app).post('/api/auth/otp/request').send({ email: 'new@example.com' });
+  assert.strictEqual(res.status, 500);
+  assert.strictEqual(res.body.error.code, 'OTP_EMAIL_FAILED');
+  assert.match(res.body.error.message, /SMTP/i);
+});
+
 test('POST /api/auth/otp/request - a second request for the same email within the cooldown is rejected with 429', async (t) => {
   t.mock.method(otpStore, 'findByEmail', async () => ({
     email: 'new@example.com',
