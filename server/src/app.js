@@ -27,6 +27,19 @@ if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const app = express();
 
+// Render (like Vercel, Heroku, etc.) puts every request through a reverse
+// proxy, which sets X-Forwarded-For to the real client IP. Without this,
+// Express's own req.ip falls back to the proxy's own IP for EVERY request
+// - meaning express-rate-limit (see middleware/rateLimit.js) would key its
+// per-IP buckets on that one shared proxy address instead of actual
+// visitors, either rate-limiting all users as if they were one person or
+// (depending on the version) refusing to start key generation at all,
+// which is exactly the ERR_ERL_UNEXPECTED_X_FORWARDED_FOR warning this
+// fixes. `1` trusts exactly one hop in front of Express - Render's own
+// edge proxy - not an arbitrary chain of proxies an attacker could spoof
+// by setting their own X-Forwarded-For.
+app.set('trust proxy', 1);
+
 // ALLOWED_ORIGIN is optional - unset (the default) allows all origins,
 // which is fine for local dev and for a same-origin production deploy
 // (frontend/backend behind one domain). Set it explicitly (comma-separated
