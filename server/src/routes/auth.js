@@ -1,5 +1,8 @@
 const express = require('express');
 const userStore = require('../db/userStore');
+const otpStore = require('../db/otpStore');
+const otp = require('../services/otp');
+const emailService = require('../services/emailService');
 const { signToken, TOKEN_TTL } = require('../services/authTokens');
 const { COOKIE_NAME } = require('../middleware/userAuth');
 const { getGuestQueriesRemaining, GUEST_QUERY_LIMIT } = require('../middleware/guestQueryLimit');
@@ -7,11 +10,27 @@ const { getGuestQueriesRemaining, GUEST_QUERY_LIMIT } = require('../middleware/g
 const router = express.Router();
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const MIN_PASSWORD_LENGTH = 8;
 const COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // matches authTokens.js's TOKEN_TTL (30d)
 
-function errorResponse(res, status, code, message) {
-  return res.status(status).json({ error: { code, message } });
+// How long a requested code stays valid, and how many wrong guesses are
+// allowed against it before it's invalidated outright (forcing a fresh
+// request rather than letting someone sit and brute-force a 6-digit space
+// against one open attempt window). 10 minutes / 5 attempts are standard,
+// unremarkable values for an OTP flow like this - long enough that a
+// slightly slow email provider doesn't strand a real user, short/tight
+// enough that a guessed code is a near-zero-probability event
+// (1,000,000 possibilities, 5 guesses).
+const OTP_EXPIRY_MS = 10 * 60 * 1000;
+const MAX_ATTEMPTS = 5;
+// Minimum time between two /otp/request calls for the SAME email - not a
+// substitute for the IP-based expensiveLimiter this whole router already
+// sits behind (see app.js), but that one can't stop someone hammering a
+// SPECIFIC inbox with codes (a different concern: cost/spam to that one
+// address, not overall request volume) from behind many different IPs.
+const RESEND_COOLDOWN_MS = 45 * 1000;
+
+function errorResponse(res, status, code, message, extra) {
+  return res.status(status).json({ error: { code, message, ...extra } });
 }
 
 function setSessionCookie(res, userId) {
@@ -25,55 +44,100 @@ function setSessionCookie(res, userId) {
   });
 }
 
-// POST /api/auth/signup
-router.post('/signup', async (req, res) => {
-  const { email, password } = req.body || {};
+// POST /api/auth/otp/request - starts (or restarts) a sign-in: generates a
+// fresh 6-digit code, emails it, and upserts it as the one live code for
+// this address (see otpStore.upsert - any previous still-pending code for
+// the same email is replaced, not left valid alongside the new one).
+// Deliberately the SAME endpoint whether this is someone's first time
+// (no user row yet) or their hundredth - account creation only actually
+// happens on a successful /otp/verify below, so there's nothing
+// email-enumerable here: this responds identically either way.
+router.post('/otp/request', async (req, res) => {
+  const { email } = req.body || {};
   if (typeof email !== 'string' || !EMAIL_RE.test(email.trim())) {
     return errorResponse(res, 400, 'INVALID_EMAIL', 'Please enter a valid email address.');
   }
-  if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
-    return errorResponse(res, 400, 'INVALID_PASSWORD', `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
-  }
+  const normalizedEmail = email.trim().toLowerCase();
 
   try {
-    const user = await userStore.create({ email, password });
-    setSessionCookie(res, user.id);
-    res.status(201).json({ user: { id: user.id, email: user.email } });
-  } catch (err) {
-    // userStore.create already turns a duplicate-email DB error into this
-    // exact user-safe message (see its own comment on why: a unique
-    // constraint, not a separate pre-check, avoids a signup race).
-    if (err.message.includes('already exists')) {
-      return errorResponse(res, 409, 'EMAIL_TAKEN', err.message);
+    const existing = await otpStore.findByEmail(normalizedEmail);
+    if (existing) {
+      const elapsedMs = Date.now() - new Date(existing.createdAt).getTime();
+      if (elapsedMs < RESEND_COOLDOWN_MS) {
+        const secondsRemaining = Math.ceil((RESEND_COOLDOWN_MS - elapsedMs) / 1000);
+        return errorResponse(
+          res,
+          429,
+          'OTP_RESEND_TOO_SOON',
+          `Please wait ${secondsRemaining}s before requesting another code.`,
+          { secondsRemaining }
+        );
+      }
     }
-    console.error('[auth] signup failed:', err.message);
-    errorResponse(res, 500, 'SIGNUP_FAILED', 'Something went wrong creating your account. Please try again.');
+
+    const code = otp.generateCode();
+    await otpStore.upsert({
+      email: normalizedEmail,
+      codeHash: otp.hashCode(code),
+      expiresAt: new Date(Date.now() + OTP_EXPIRY_MS).toISOString(),
+    });
+    await emailService.sendOtpEmail(normalizedEmail, code);
+
+    res.json({ sent: true, expiresInSeconds: OTP_EXPIRY_MS / 1000 });
+  } catch (err) {
+    console.error('[auth] otp/request failed:', err.message);
+    errorResponse(res, 500, 'OTP_SEND_FAILED', 'Something went wrong sending your code. Please try again.');
   }
 });
 
-// POST /api/auth/login
-router.post('/login', async (req, res) => {
-  const { email, password } = req.body || {};
-  if (typeof email !== 'string' || typeof password !== 'string') {
-    return errorResponse(res, 400, 'INVALID_CREDENTIALS', 'Email and password are both required.');
+// POST /api/auth/otp/verify - the only place an account actually gets
+// created (see userStore.findOrCreateByEmail) - a verified email IS the
+// account, there's no separate password to set.
+router.post('/otp/verify', async (req, res) => {
+  const { email, code } = req.body || {};
+  if (typeof email !== 'string' || !EMAIL_RE.test(email.trim())) {
+    return errorResponse(res, 400, 'INVALID_EMAIL', 'Please enter a valid email address.');
   }
+  if (typeof code !== 'string' || !/^\d{6}$/.test(code.trim())) {
+    return errorResponse(res, 400, 'INVALID_CODE', 'Enter the 6-digit code from your email.');
+  }
+  const normalizedEmail = email.trim().toLowerCase();
 
   try {
-    const user = await userStore.findByEmail(email);
-    // Deliberately the same generic message whether the email doesn't
-    // exist or the password is wrong - distinguishing the two lets an
-    // attacker enumerate which emails have accounts.
-    const genericError = () => errorResponse(res, 401, 'INVALID_CREDENTIALS', 'Incorrect email or password.');
-    if (!user) return genericError();
+    const record = await otpStore.findByEmail(normalizedEmail);
+    if (!record) {
+      return errorResponse(res, 400, 'OTP_NOT_FOUND', 'That code has expired or was never requested. Request a new one.');
+    }
+    if (new Date(record.expiresAt).getTime() < Date.now()) {
+      await otpStore.deleteByEmail(normalizedEmail);
+      return errorResponse(res, 400, 'OTP_EXPIRED', 'That code has expired. Request a new one.');
+    }
+    if (record.attempts >= MAX_ATTEMPTS) {
+      await otpStore.deleteByEmail(normalizedEmail);
+      return errorResponse(res, 400, 'OTP_TOO_MANY_ATTEMPTS', 'Too many incorrect attempts. Request a new code.');
+    }
 
-    const valid = await userStore.verifyPassword(user, password);
-    if (!valid) return genericError();
+    const matches = otp.hashesMatch(otp.hashCode(code.trim()), record.codeHash);
+    if (!matches) {
+      const attemptsNow = await otpStore.incrementAttempts(normalizedEmail);
+      if (attemptsNow >= MAX_ATTEMPTS) {
+        await otpStore.deleteByEmail(normalizedEmail);
+        return errorResponse(res, 400, 'OTP_TOO_MANY_ATTEMPTS', 'Too many incorrect attempts. Request a new code.');
+      }
+      return errorResponse(res, 400, 'OTP_INCORRECT', 'That code is incorrect.', {
+        attemptsRemaining: MAX_ATTEMPTS - attemptsNow,
+      });
+    }
 
+    // Correct code - it's now spent, so it can never be replayed even
+    // within its expiry window.
+    await otpStore.deleteByEmail(normalizedEmail);
+    const user = await userStore.findOrCreateByEmail(normalizedEmail);
     setSessionCookie(res, user.id);
     res.json({ user: { id: user.id, email: user.email } });
   } catch (err) {
-    console.error('[auth] login failed:', err.message);
-    errorResponse(res, 500, 'LOGIN_FAILED', 'Something went wrong signing you in. Please try again.');
+    console.error('[auth] otp/verify failed:', err.message);
+    errorResponse(res, 500, 'OTP_VERIFY_FAILED', 'Something went wrong verifying your code. Please try again.');
   }
 });
 

@@ -27,7 +27,7 @@ export function GuestLimitGate() {
   }, []);
 
   // Belt-and-suspenders: if signing in ever resolves without the usual
-  // full-page reload (see AuthContext's login/signup), don't leave a
+  // full-page reload (see AuthContext's verifyOtp), don't leave a
   // forced modal stuck open in front of an now-signed-in person.
   useEffect(() => {
     if (user) setOpen(false);

@@ -1,39 +1,10 @@
-const bcrypt = require('bcryptjs');
 const { getSupabase } = require('./supabaseClient');
 
 const TABLE = 'users';
-// 10 rounds is bcrypt's own commonly-recommended default for an
-// interactive login flow - enough cost to make offline brute-forcing a
-// stolen hash meaningfully slow, without making signup/login feel sluggish
-// on ordinary hardware (unlike a data-processing job, this runs inline in
-// a request a real person is waiting on).
-const SALT_ROUNDS = 10;
 
 function fromDb(row) {
   if (!row) return null;
-  return { id: row.id, email: row.email, passwordHash: row.password_hash, createdAt: row.created_at };
-}
-
-/**
- * Creates a new user, hashing the password before it ever reaches the
- * database - throws a plain Error with a user-safe message on a duplicate
- * email (checked via Postgres's own unique constraint on `email`, not a
- * separate pre-check, to avoid a check-then-insert race between two
- * concurrent signups for the same address).
- */
-async function create({ email, password }) {
-  const supabase = getSupabase();
-  const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-  const { data, error } = await supabase
-    .from(TABLE)
-    .insert({ email: email.toLowerCase().trim(), password_hash: passwordHash })
-    .select()
-    .single();
-  if (error) {
-    if (error.code === '23505') throw new Error('An account with this email already exists.');
-    throw new Error(`userStore.create failed: ${error.message}`);
-  }
-  return fromDb(data);
+  return { id: row.id, email: row.email, createdAt: row.created_at };
 }
 
 async function findByEmail(email) {
@@ -54,9 +25,40 @@ async function findById(id) {
   return fromDb(data);
 }
 
-/** Verifies a plaintext password against a user's stored hash. */
-async function verifyPassword(user, password) {
-  return bcrypt.compare(password, user.passwordHash);
+/**
+ * The only way an account gets created now (see routes/auth.js's OTP
+ * verify endpoint) - there's no separate "sign up" step distinct from
+ * "log in" anymore. A first-time verified email silently becomes an
+ * account; a returning one just logs in. No password_hash is ever set
+ * (see migration_008 - the column is nullable now) since there is no
+ * password in this flow at all.
+ *
+ * Race-safe the same way userStore.create used to be for passwords: relies
+ * on the DB's unique constraint on `email`, not a check-then-insert, so two
+ * concurrent first-time verifications for the same address can't create
+ * two rows. If the insert loses that race, this falls back to reading the
+ * row the other request just created rather than surfacing an error - from
+ * the caller's point of view (routes/auth.js, which already has a
+ * just-verified OTP in hand) this must always succeed with SOME user row
+ * for this email, never a 409.
+ */
+async function findOrCreateByEmail(email) {
+  const normalized = email.toLowerCase().trim();
+  const existing = await findByEmail(normalized);
+  if (existing) return existing;
+
+  const supabase = getSupabase();
+  const { data, error } = await supabase.from(TABLE).insert({ email: normalized }).select().single();
+  if (error) {
+    if (error.code === '23505') {
+      // Lost a create race against a concurrent verification for the same
+      // email - the row now exists, just not from this call.
+      const row = await findByEmail(normalized);
+      if (row) return row;
+    }
+    throw new Error(`userStore.findOrCreateByEmail failed: ${error.message}`);
+  }
+  return fromDb(data);
 }
 
-module.exports = { create, findByEmail, findById, verifyPassword };
+module.exports = { findByEmail, findById, findOrCreateByEmail };

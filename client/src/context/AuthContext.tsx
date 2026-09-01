@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { getMe, login as apiLogin, logout as apiLogout, signup as apiSignup, type AccountUser } from '../lib/api';
+import { getMe, logout as apiLogout, requestOtp as apiRequestOtp, verifyOtp as apiVerifyOtp, type AccountUser } from '../lib/api';
 import { withRetry } from '../lib/retry';
 
 interface AuthContextValue {
@@ -13,8 +13,8 @@ interface AuthContextValue {
   guestQueriesRemaining: number | null;
   guestQueryLimit: number | null;
   setGuestQueriesRemaining: (remaining: number | null) => void;
-  signup: (email: string, password: string) => Promise<void>;
-  login: (email: string, password: string) => Promise<void>;
+  requestOtp: (email: string) => Promise<{ expiresInSeconds: number }>;
+  verifyOtp: (email: string, code: string) => Promise<void>;
   logout: () => Promise<void>;
   clearAuthError: () => void;
 }
@@ -44,31 +44,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
-  // Deliberately a full reload after any account-state change (signup,
-  // login, logout), rather than trying to refetch every piece of state
-  // (documents, conversations, active thread, cached content) by hand.
-  // This is a security boundary, not just a UI refresh - a full reload
-  // guarantees there is no possible leftover state from a different
-  // account/guest session anywhere in memory, which piecemeal refetching
-  // would need to get perfectly right in every context to match.
-  async function signup(email: string, password: string) {
+  // Step 1 of sign-in - sends a fresh 6-digit code to this email (see
+  // server/src/routes/auth.js's /otp/request). Never creates an account by
+  // itself and never says whether this email already has one - that only
+  // happens (implicitly) on a successful verifyOtp below, so there's
+  // nothing here for an attacker to enumerate.
+  async function requestOtp(email: string) {
     setAuthError(null);
     try {
-      await apiSignup(email, password);
-      window.location.reload();
+      const { expiresInSeconds } = await apiRequestOtp(email);
+      return { expiresInSeconds };
     } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Could not create your account.');
+      setAuthError(err instanceof Error ? err.message : 'Could not send a code to that email.');
       throw err;
     }
   }
 
-  async function login(email: string, password: string) {
+  // Step 2 - deliberately a full reload on success, rather than trying to
+  // refetch every piece of state (documents, conversations, active thread,
+  // cached content) by hand. This is a security boundary, not just a UI
+  // refresh - a full reload guarantees there is no possible leftover state
+  // from a different account/guest session anywhere in memory, which
+  // piecemeal refetching would need to get perfectly right in every
+  // context to match.
+  async function verifyOtp(email: string, code: string) {
     setAuthError(null);
     try {
-      await apiLogin(email, password);
+      await apiVerifyOtp(email, code);
       window.location.reload();
     } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Could not sign you in.');
+      setAuthError(err instanceof Error ? err.message : 'That code didn\'t work.');
       throw err;
     }
   }
@@ -99,8 +104,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         guestQueriesRemaining,
         guestQueryLimit,
         setGuestQueriesRemaining,
-        signup,
-        login,
+        requestOtp,
+        verifyOtp,
         logout,
         clearAuthError,
       }}

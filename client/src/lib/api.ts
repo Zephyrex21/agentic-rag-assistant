@@ -49,9 +49,46 @@ export function setAccessKey(key: string): void {
   }
 }
 
+// --- Guest identity (server: middleware/guestQueryLimit.js) ---
+//
+// A header + localStorage id, NOT a cookie - deliberately, same reasoning
+// as the access key above. This app's frontend/backend are commonly
+// deployed on separate domains (see README's Deployment section), and a
+// cookie set by the backend in that shape is a third-party cookie from
+// the browser's point of view: SameSite=Lax blocks it from ever being
+// sent back on cross-site fetch requests at all, and even SameSite=None
+// runs into Safari's ITP and Chrome's third-party-cookie restrictions.
+// A plain header this client attaches itself sidesteps all of that.
+const GUEST_ID_STORAGE_KEY = 'rag_guest_id';
+const GUEST_ID_HEADER = 'X-Guest-Id';
+
+function getGuestId(): string {
+  try {
+    let id = localStorage.getItem(GUEST_ID_STORAGE_KEY);
+    if (!id) {
+      id =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `guest-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      localStorage.setItem(GUEST_ID_STORAGE_KEY, id);
+    }
+    return id;
+  } catch {
+    // localStorage can throw in some locked-down/private-browsing contexts
+    // (same as getAccessKey above) - a guest in that situation simply
+    // isn't tracked for the free-question limit, they aren't blocked from
+    // using the app.
+    return '';
+  }
+}
+
 function authHeaders(): Record<string, string> {
   const key = getAccessKey();
-  return key ? { 'X-App-Access-Key': key } : {};
+  const guestId = getGuestId();
+  return {
+    ...(key ? { 'X-App-Access-Key': key } : {}),
+    ...(guestId ? { [GUEST_ID_HEADER]: guestId } : {}),
+  };
 }
 
 // credentials: 'include' on every call below - required for the user-
@@ -128,33 +165,37 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return body as T;
 }
 
-// ---------- Account (signup/login/logout) ----------
+// ---------- Account (passwordless email-OTP sign-in) ----------
 //
 // Guest mode needs none of this - every call above/below already works
 // with no session cookie at all, scoped to the shared guest pool exactly
 // as this app always worked (see server/src/middleware/userAuth.js).
+//
+// Two-step, not signup vs. login - there's only ever one flow: request a
+// code for an email, then verify it. The account is created transparently
+// on a first-time email's successful verify (see server/src/routes/auth.js).
 
 export interface AccountUser {
   id: string;
   email: string;
 }
 
-export async function signup(email: string, password: string): Promise<{ user: AccountUser }> {
-  const res = await fetch(`${API_BASE}/api/auth/signup`, {
+export async function requestOtp(email: string): Promise<{ sent: boolean; expiresInSeconds: number }> {
+  const res = await fetch(`${API_BASE}/api/auth/otp/request`, {
     method: 'POST',
     credentials: CREDENTIALS,
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email }),
   });
   return handleResponse(res);
 }
 
-export async function login(email: string, password: string): Promise<{ user: AccountUser }> {
-  const res = await fetch(`${API_BASE}/api/auth/login`, {
+export async function verifyOtp(email: string, code: string): Promise<{ user: AccountUser }> {
+  const res = await fetch(`${API_BASE}/api/auth/otp/verify`, {
     method: 'POST',
     credentials: CREDENTIALS,
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, code }),
   });
   return handleResponse(res);
 }

@@ -1,8 +1,7 @@
-const crypto = require('crypto');
 const { parseIntEnv } = require('../utils/envConfig');
 
-const GUEST_COOKIE_NAME = 'guest_id';
-const COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30d - matches the session cookie in routes/auth.js
+const GUEST_ID_HEADER = 'x-guest-id';
+const MAX_GUEST_ID_LENGTH = 100;
 
 // How many questions a guest (no account) gets before being required to
 // sign in. Overridable via env for local testing (a smaller number is much
@@ -14,42 +13,51 @@ const GUEST_QUERY_LIMIT = parseIntEnv('GUEST_QUERY_LIMIT', 2, { min: 1 });
  * In-memory, like usageTracker.js - resets on every server restart. That's
  * a real, deliberate limitation: this is meant to stop a casual guest from
  * chatting indefinitely without an account, not to be a bulletproof abuse
- * wall. Someone who clears cookies, opens a private window, or waits for a
- * server restart gets a fresh count - closing that gap fully would mean
- * fingerprinting or IP-based tracking, which brings its own accuracy and
- * privacy trade-offs this project doesn't take on for what's fundamentally
- * a "nudge toward creating an account" feature, not a paywall.
+ * wall. Someone who clears localStorage, opens a private window, or waits
+ * for a server restart gets a fresh count - closing that gap fully would
+ * mean fingerprinting or IP-based tracking, which brings its own accuracy
+ * and privacy trade-offs this project doesn't take on for what's
+ * fundamentally a "nudge toward creating an account" feature, not a
+ * paywall.
  */
 const queryCountsByGuestId = new Map();
 
 /**
- * Assigns every guest request a stable, httpOnly id cookie - separate from
- * the account session cookie (see routes/auth.js's COOKIE_NAME), since a
- * guest by definition has no session. httpOnly means client-side JS can
- * never read or clear it, so a normal page refresh (or even closing and
- * reopening the tab) keeps the same id and the same count; only actually
- * clearing cookies/site data or switching browser profiles resets it - the
- * same trade-off every cookie-based anonymous-usage tracker makes.
+ * Reads the guest id off the X-Guest-Id header - NOT a cookie. This app's
+ * frontend and backend are commonly deployed on separate domains (e.g. a
+ * Vercel frontend + a Render backend - see the README's Deployment
+ * section), and a cookie set by the backend in that shape is a
+ * third-party cookie from the browser's point of view. That makes a
+ * cookie-based approach silently unreliable in exactly the deployment
+ * this project documents as its main supported one:
+ *   - SameSite=Lax (the safe default for a cookie like this) blocks the
+ *     cookie from being sent on cross-site fetch/XHR requests entirely -
+ *     only top-level GET navigations get it, which an API call never is.
+ *   - SameSite=None would fix that, but Safari's ITP and Chrome's
+ *     third-party-cookie phase-out increasingly block/partition
+ *     third-party cookies outright regardless of SameSite.
+ * A plain custom header sent explicitly by client code (persisted in
+ * localStorage - see lib/api.ts's getGuestId) has none of these
+ * restrictions, because it was never a cookie to begin with. This is the
+ * same reasoning the access-key feature right next to this one already
+ * uses (see middleware/auth.js and lib/api.ts's ACCESS_KEY_STORAGE_KEY) -
+ * header + localStorage, not a cookie, for anything the client itself
+ * needs to keep sending back.
  *
  * A no-op for anyone with a valid session (req.user is already set by
  * attachUser, which must run before this) - logged-in users are never
- * subject to the guest limit at all, so there's nothing to track for them.
+ * subject to the guest limit at all, so there's nothing to read for them.
  */
 function attachGuestId(req, res, next) {
   if (req.user) return next();
 
-  let guestId = req.cookies?.[GUEST_COOKIE_NAME];
-  if (!guestId) {
-    guestId = crypto.randomUUID();
-    res.cookie(GUEST_COOKIE_NAME, guestId, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: COOKIE_MAX_AGE_MS,
-      path: '/',
-    });
-  }
-  req.guestId = guestId;
+  const headerValue = req.headers[GUEST_ID_HEADER];
+  const guestId = typeof headerValue === 'string' ? headerValue.trim().slice(0, MAX_GUEST_ID_LENGTH) : '';
+  // Empty string (header missing, e.g. a raw API/curl call that isn't this
+  // project's own frontend) becomes null rather than "" - keeps the map
+  // free of a shared "" bucket that every headerless caller would
+  // otherwise collide into and share a count through.
+  req.guestId = guestId || null;
   next();
 }
 
@@ -69,6 +77,12 @@ function enforceGuestQueryLimit(req, res, next) {
   if (req.user) return next(); // signed-in users are never limited
 
   const guestId = req.guestId;
+  // No id at all means the caller isn't this project's own frontend (which
+  // always sends one - see attachGuestId above) - nothing to track a count
+  // against, so nothing to enforce. This only affects direct API callers
+  // bypassing the UI entirely, not real guest usage through the app.
+  if (!guestId) return next();
+
   const count = queryCountsByGuestId.get(guestId) || 0;
 
   if (count >= GUEST_QUERY_LIMIT) {
@@ -108,7 +122,7 @@ module.exports = {
   attachGuestId,
   enforceGuestQueryLimit,
   getGuestQueriesRemaining,
-  GUEST_COOKIE_NAME,
+  GUEST_ID_HEADER,
   GUEST_QUERY_LIMIT,
   _resetForTests,
 };

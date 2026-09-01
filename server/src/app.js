@@ -80,12 +80,14 @@ app.use('/api', requireAppAccessKey);
 // extra DB lookup this does.
 app.use('/api', attachUser);
 
-// Assigns a stable httpOnly guest id cookie to any request that isn't
-// already signed in - see middleware/guestQueryLimit.js. Placed right
-// after attachUser so req.user is already resolved (a signed-in request
-// skips this entirely) and before any route that might want to read
-// req.guestId (currently just GET /api/auth/me, for reporting remaining
-// free questions without consuming one).
+// Reads the client-supplied X-Guest-Id header for any request that isn't
+// already signed in - see middleware/guestQueryLimit.js (a header, NOT a
+// cookie - cross-site cookies are unreliable for this app's typical
+// separate-domain deployment). Placed right after attachUser so req.user
+// is already resolved (a signed-in request skips this entirely) and
+// before any route that might want to read req.guestId (currently just
+// GET /api/auth/me, for reporting remaining free questions without
+// consuming one).
 app.use('/api', attachGuestId);
 
 // Defense in depth: if any route handler ever has an unwrapped async call that

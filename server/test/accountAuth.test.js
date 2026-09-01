@@ -8,74 +8,157 @@ process.env.PINECONE_API_KEY = process.env.PINECONE_API_KEY || 'dummy';
 process.env.PINECONE_INDEX_NAME = process.env.PINECONE_INDEX_NAME || 'dummy';
 
 const userStore = require('../src/db/userStore');
+const otpStore = require('../src/db/otpStore');
+const emailService = require('../src/services/emailService');
+const otp = require('../src/services/otp');
 const app = require('../src/app');
 
-// Regression/behavior coverage for the new user-account system. Guest mode
-// (no signup/login at all) is covered implicitly by every OTHER route test
-// file in this suite, which never send a session cookie and still work -
-// these tests are specifically about the new opt-in account layer.
+// Regression/behavior coverage for the passwordless email-OTP account
+// system (see routes/auth.js, services/otp.js, services/emailService.js).
+// Guest mode (no account at all) is covered implicitly by every OTHER
+// route test file in this suite, which never send a session cookie and
+// still work - these tests are specifically about the account layer.
 
-test('POST /api/auth/signup - rejects an invalid email', async () => {
-  const res = await request(app).post('/api/auth/signup').send({ email: 'not-an-email', password: 'longenough123' });
+test('POST /api/auth/otp/request - rejects an invalid email', async () => {
+  const res = await request(app).post('/api/auth/otp/request').send({ email: 'not-an-email' });
   assert.strictEqual(res.status, 400);
   assert.strictEqual(res.body.error.code, 'INVALID_EMAIL');
 });
 
-test('POST /api/auth/signup - rejects a too-short password', async () => {
-  const res = await request(app).post('/api/auth/signup').send({ email: 'a@example.com', password: 'short' });
-  assert.strictEqual(res.status, 400);
-  assert.strictEqual(res.body.error.code, 'INVALID_PASSWORD');
+test('POST /api/auth/otp/request - generates a code, emails it, and stores only its hash', async (t) => {
+  t.mock.method(otpStore, 'findByEmail', async () => null); // no pending code - no cooldown to check
+  let storedArgs = null;
+  t.mock.method(otpStore, 'upsert', async (args) => {
+    storedArgs = args;
+  });
+  let sentCode = null;
+  t.mock.method(emailService, 'sendOtpEmail', async (_email, code) => {
+    sentCode = code;
+  });
+
+  const res = await request(app).post('/api/auth/otp/request').send({ email: 'new@example.com' });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.sent, true);
+  assert.match(sentCode, /^\d{6}$/, 'FAIL: expected a 6-digit numeric code');
+  assert.strictEqual(storedArgs.email, 'new@example.com');
+  assert.strictEqual(storedArgs.codeHash, otp.hashCode(sentCode), 'FAIL: the stored hash must match the emailed code');
+  assert.notStrictEqual(storedArgs.codeHash, sentCode, 'FAIL: the raw code itself must never be what gets stored');
 });
 
-test('POST /api/auth/signup - creates an account and sets a session cookie', async (t) => {
-  t.mock.method(userStore, 'create', async ({ email }) => ({ id: 'user-1', email, createdAt: 'now' }));
+test('POST /api/auth/otp/request - a second request for the same email within the cooldown is rejected with 429', async (t) => {
+  t.mock.method(otpStore, 'findByEmail', async () => ({
+    email: 'new@example.com',
+    codeHash: 'irrelevant',
+    attempts: 0,
+    createdAt: new Date().toISOString(), // just created - well within the cooldown
+  }));
+  t.mock.method(otpStore, 'upsert', async () => {
+    throw new Error('FAIL: should not attempt to issue a new code inside the cooldown window');
+  });
+  t.mock.method(emailService, 'sendOtpEmail', async () => {
+    throw new Error('FAIL: should not send an email inside the cooldown window');
+  });
 
-  const res = await request(app).post('/api/auth/signup').send({ email: 'new@example.com', password: 'longenough123' });
-  assert.strictEqual(res.status, 201);
+  const res = await request(app).post('/api/auth/otp/request').send({ email: 'new@example.com' });
+  assert.strictEqual(res.status, 429);
+  assert.strictEqual(res.body.error.code, 'OTP_RESEND_TOO_SOON');
+});
+
+test('POST /api/auth/otp/verify - rejects a malformed code before touching the store', async (t) => {
+  t.mock.method(otpStore, 'findByEmail', async () => {
+    throw new Error('FAIL: should not look up a code for an invalid submission');
+  });
+
+  const res = await request(app).post('/api/auth/otp/verify').send({ email: 'real@example.com', code: 'abc123' });
+  assert.strictEqual(res.status, 400);
+  assert.strictEqual(res.body.error.code, 'INVALID_CODE');
+});
+
+test('POST /api/auth/otp/verify - no pending code for this email returns OTP_NOT_FOUND', async (t) => {
+  t.mock.method(otpStore, 'findByEmail', async () => null);
+
+  const res = await request(app).post('/api/auth/otp/verify').send({ email: 'real@example.com', code: '123456' });
+  assert.strictEqual(res.status, 400);
+  assert.strictEqual(res.body.error.code, 'OTP_NOT_FOUND');
+});
+
+test('POST /api/auth/otp/verify - an expired code is rejected and cleaned up', async (t) => {
+  t.mock.method(otpStore, 'findByEmail', async () => ({
+    email: 'real@example.com',
+    codeHash: otp.hashCode('123456'),
+    attempts: 0,
+    expiresAt: new Date(Date.now() - 1000).toISOString(), // already in the past
+  }));
+  let deletedEmail = null;
+  t.mock.method(otpStore, 'deleteByEmail', async (email) => {
+    deletedEmail = email;
+  });
+
+  const res = await request(app).post('/api/auth/otp/verify').send({ email: 'real@example.com', code: '123456' });
+  assert.strictEqual(res.status, 400);
+  assert.strictEqual(res.body.error.code, 'OTP_EXPIRED');
+  assert.strictEqual(deletedEmail, 'real@example.com', 'FAIL: an expired code should be cleaned up, not left around');
+});
+
+test('POST /api/auth/otp/verify - the wrong code is rejected and counted as an attempt (account never enumerated)', async (t) => {
+  t.mock.method(otpStore, 'findByEmail', async () => ({
+    email: 'real@example.com',
+    codeHash: otp.hashCode('123456'),
+    attempts: 1,
+    expiresAt: new Date(Date.now() + 60000).toISOString(),
+  }));
+  let incrementedEmail = null;
+  t.mock.method(otpStore, 'incrementAttempts', async (email) => {
+    incrementedEmail = email;
+    return 2;
+  });
+
+  const res = await request(app).post('/api/auth/otp/verify').send({ email: 'real@example.com', code: '999999' });
+  assert.strictEqual(res.status, 400);
+  assert.strictEqual(res.body.error.code, 'OTP_INCORRECT');
+  assert.strictEqual(res.body.error.attemptsRemaining, 3); // MAX_ATTEMPTS (5) - 2
+  assert.strictEqual(incrementedEmail, 'real@example.com');
+});
+
+test('POST /api/auth/otp/verify - hitting the attempt limit invalidates the code entirely', async (t) => {
+  t.mock.method(otpStore, 'findByEmail', async () => ({
+    email: 'real@example.com',
+    codeHash: otp.hashCode('123456'),
+    attempts: 4, // one more wrong guess reaches MAX_ATTEMPTS (5)
+    expiresAt: new Date(Date.now() + 60000).toISOString(),
+  }));
+  t.mock.method(otpStore, 'incrementAttempts', async () => 5);
+  let deletedEmail = null;
+  t.mock.method(otpStore, 'deleteByEmail', async (email) => {
+    deletedEmail = email;
+  });
+
+  const res = await request(app).post('/api/auth/otp/verify').send({ email: 'real@example.com', code: '999999' });
+  assert.strictEqual(res.status, 400);
+  assert.strictEqual(res.body.error.code, 'OTP_TOO_MANY_ATTEMPTS');
+  assert.strictEqual(deletedEmail, 'real@example.com');
+});
+
+test('POST /api/auth/otp/verify - the correct code signs in (creating the account on a first-time email) and sets a session cookie', async (t) => {
+  t.mock.method(otpStore, 'findByEmail', async () => ({
+    email: 'new@example.com',
+    codeHash: otp.hashCode('123456'),
+    attempts: 0,
+    expiresAt: new Date(Date.now() + 60000).toISOString(),
+  }));
+  let deletedEmail = null;
+  t.mock.method(otpStore, 'deleteByEmail', async (email) => {
+    deletedEmail = email;
+  });
+  t.mock.method(userStore, 'findOrCreateByEmail', async (email) => ({ id: 'user-1', email, createdAt: 'now' }));
+
+  const res = await request(app).post('/api/auth/otp/verify').send({ email: 'new@example.com', code: '123456' });
+  assert.strictEqual(res.status, 200);
   assert.strictEqual(res.body.user.email, 'new@example.com');
-  assert.strictEqual(res.body.user.passwordHash, undefined, 'FAIL: the password hash must never be returned to the client');
+  assert.strictEqual(deletedEmail, 'new@example.com', 'FAIL: a successfully-used code must be consumed, not reusable');
   const setCookie = res.headers['set-cookie']?.join(';') || '';
   assert.ok(setCookie.includes('session='), 'FAIL: expected a session cookie to be set');
   assert.ok(/HttpOnly/i.test(setCookie), 'FAIL: the session cookie must be HttpOnly');
-});
-
-test('POST /api/auth/signup - a duplicate email is rejected with 409, not 500', async (t) => {
-  t.mock.method(userStore, 'create', async () => {
-    throw new Error('An account with this email already exists.');
-  });
-
-  const res = await request(app).post('/api/auth/signup').send({ email: 'taken@example.com', password: 'longenough123' });
-  assert.strictEqual(res.status, 409);
-  assert.strictEqual(res.body.error.code, 'EMAIL_TAKEN');
-});
-
-test('POST /api/auth/login - wrong password returns a generic 401 (not "email not found")', async (t) => {
-  t.mock.method(userStore, 'findByEmail', async (email) => ({ id: 'user-1', email, passwordHash: 'irrelevant' }));
-  t.mock.method(userStore, 'verifyPassword', async () => false);
-
-  const res = await request(app).post('/api/auth/login').send({ email: 'real@example.com', password: 'wrongpassword' });
-  assert.strictEqual(res.status, 401);
-  assert.strictEqual(res.body.error.code, 'INVALID_CREDENTIALS');
-});
-
-test('POST /api/auth/login - an unknown email returns the SAME generic 401 (no account-enumeration signal)', async (t) => {
-  t.mock.method(userStore, 'findByEmail', async () => null);
-
-  const res = await request(app).post('/api/auth/login').send({ email: 'doesnotexist@example.com', password: 'whatever123' });
-  assert.strictEqual(res.status, 401);
-  assert.strictEqual(res.body.error.code, 'INVALID_CREDENTIALS');
-  assert.strictEqual(res.body.error.message, 'Incorrect email or password.');
-});
-
-test('POST /api/auth/login - correct credentials set a session cookie', async (t) => {
-  t.mock.method(userStore, 'findByEmail', async (email) => ({ id: 'user-1', email, passwordHash: 'hashed' }));
-  t.mock.method(userStore, 'verifyPassword', async () => true);
-
-  const res = await request(app).post('/api/auth/login').send({ email: 'real@example.com', password: 'correctpassword' });
-  assert.strictEqual(res.status, 200);
-  assert.strictEqual(res.body.user.email, 'real@example.com');
-  const setCookie = res.headers['set-cookie']?.join(';') || '';
-  assert.ok(setCookie.includes('session='), 'FAIL: expected a session cookie to be set');
 });
 
 test('POST /api/auth/logout - clears the session cookie', async () => {
@@ -83,7 +166,7 @@ test('POST /api/auth/logout - clears the session cookie', async () => {
   assert.strictEqual(res.status, 200);
   const setCookie = res.headers['set-cookie']?.join(';') || '';
   // A cleared cookie is sent back with an expiry in the past / empty value
-  assert.ok(setCookie.includes('session=;') || setCookie.includes('session=') , 'FAIL: expected the session cookie to be cleared');
+  assert.ok(setCookie.includes('session=;') || setCookie.includes('session='), 'FAIL: expected the session cookie to be cleared');
 });
 
 test('GET /api/auth/me - reports null for a guest (no cookie sent)', async () => {
@@ -93,7 +176,7 @@ test('GET /api/auth/me - reports null for a guest (no cookie sent)', async () =>
 });
 
 test('GET /api/auth/me - reports the logged-in user for a valid session cookie', async (t) => {
-  t.mock.method(userStore, 'findById', async (id) => ({ id, email: 'real@example.com', passwordHash: 'hashed' }));
+  t.mock.method(userStore, 'findById', async (id) => ({ id, email: 'real@example.com' }));
 
   const { signToken } = require('../src/services/authTokens');
   const token = signToken('user-1');
