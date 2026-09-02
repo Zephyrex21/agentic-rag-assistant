@@ -1,11 +1,21 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type FormEvent, type KeyboardEvent } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mail, ShieldCheck, AlertCircle, ArrowLeft } from 'lucide-react';
+import { Mail, ShieldCheck, AlertCircle, ArrowLeft, Coffee } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 const CODE_LENGTH = 6;
 const RESEND_COOLDOWN_SECONDS = 45; // mirrors server/src/routes/auth.js's RESEND_COOLDOWN_MS
+// Same idea and same default as ConversationsContext.tsx's cold-start
+// detection (see ColdStartNotice.tsx) - a request taking meaningfully
+// longer than a warm server ever would, without yet being an outright
+// failure, most likely means Render's free tier is waking a spun-down
+// instance back up. Read lazily (a function, not a module-level const) so
+// a test's vi.stubEnv override is picked up when the effect runs, not
+// captured too early at import time.
+function getColdStartThresholdMs() {
+  return Number(import.meta.env.VITE_COLD_START_THRESHOLD_MS) || 2500;
+}
 
 export type AuthMode = 'signin' | 'signup';
 
@@ -66,9 +76,25 @@ export function AuthModal({ open, onOpenChange, initialMode = 'signin', forced =
   const [email, setEmail] = useState('');
   const [digits, setDigits] = useState<string[]>(Array(CODE_LENGTH).fill(''));
   const [submitting, setSubmitting] = useState(false);
+  const [isColdStarting, setIsColdStarting] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
   const digitRefs = useRef<(HTMLInputElement | null)[]>([]);
   const { requestOtp, verifyOtp, authError, clearAuthError } = useAuth();
+
+  // Arms only while a request is actually in flight - see apiFetch's own
+  // 75s hard timeout in lib/api.ts for what happens if this never
+  // resolves at all. This is purely the "still waiting, and here's
+  // probably why" reassurance in between: without it, the button just
+  // reads "Sending..."/"Verifying..." with zero explanation for however
+  // long a real cold start takes.
+  useEffect(() => {
+    if (!submitting) {
+      setIsColdStarting(false);
+      return;
+    }
+    const timer = setTimeout(() => setIsColdStarting(true), getColdStartThresholdMs());
+    return () => clearTimeout(timer);
+  }, [submitting]);
 
   // Counts down once a code has been sent - blocks a second /otp/request
   // for the same email before the server's own cooldown would reject it
@@ -254,6 +280,13 @@ export function AuthModal({ open, onOpenChange, initialMode = 'signin', forced =
                       </button>
                     </form>
 
+                    {isColdStarting && (
+                      <p className="mt-2 flex items-center justify-center gap-1.5 text-center text-[11.5px] text-ink-muted">
+                        <Coffee size={12} className="shrink-0" />
+                        Waking up the server - free hosting naps when idle, this can take up to a minute.
+                      </p>
+                    )}
+
                     <p className="mt-4 text-center text-[13px] text-ink-muted">
                       <button type="button" onClick={toggleMode} className="cursor-pointer font-medium text-accent">
                         {copy.toggleLabel}
@@ -326,6 +359,13 @@ export function AuthModal({ open, onOpenChange, initialMode = 'signin', forced =
                       <ShieldCheck size={15} />
                       {submitting ? 'Verifying...' : 'Verify & continue'}
                     </button>
+
+                    {isColdStarting && (
+                      <p className="mt-2 flex items-center justify-center gap-1.5 text-center text-[11.5px] text-ink-muted">
+                        <Coffee size={12} className="shrink-0" />
+                        Waking up the server - free hosting naps when idle, this can take up to a minute.
+                      </p>
+                    )}
 
                     <button
                       type="button"

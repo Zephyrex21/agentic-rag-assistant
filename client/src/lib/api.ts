@@ -149,6 +149,42 @@ export class ApiError extends Error {
   }
 }
 
+// Render's free tier (this app's typical backend host) spins the server
+// down after inactivity, and waking it back up can take up to roughly a
+// minute (see ColdStartNotice.tsx) - long enough that plain fetch(), which
+// has no timeout of its own, can leave a "Sending..." button sitting there
+// indefinitely if something is ACTUALLY wrong (dropped connection, server
+// genuinely hung) rather than just cold. 75s comfortably covers a real
+// cold start while still guaranteeing every request eventually settles
+// one way or another instead of hanging forever with no recovery.
+//
+// Deliberately NOT used for the SSE streaming connection in postStream()
+// below - once that fetch's promise resolves and the response starts
+// streaming, the same AbortController would tear down an in-progress
+// generation the moment this timer fired, which could easily be longer
+// than 75s for a multi-step agentic answer. A stuck STREAMING connection
+// is a different problem with a different fix, not this one.
+const REQUEST_TIMEOUT_MS = 75000;
+
+async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new ApiError(
+        "This is taking longer than expected. The server may still be waking up (free hosting tiers can take up to a minute to start) - please try again.",
+        'REQUEST_TIMEOUT',
+        0
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   const isJson = res.headers.get('content-type')?.includes('application/json');
   const body = isJson ? await res.json() : null;
@@ -181,7 +217,7 @@ export interface AccountUser {
 }
 
 export async function requestOtp(email: string): Promise<{ sent: boolean; expiresInSeconds: number }> {
-  const res = await fetch(`${API_BASE}/api/auth/otp/request`, {
+  const res = await apiFetch(`${API_BASE}/api/auth/otp/request`, {
     method: 'POST',
     credentials: CREDENTIALS,
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -191,7 +227,7 @@ export async function requestOtp(email: string): Promise<{ sent: boolean; expire
 }
 
 export async function verifyOtp(email: string, code: string): Promise<{ user: AccountUser }> {
-  const res = await fetch(`${API_BASE}/api/auth/otp/verify`, {
+  const res = await apiFetch(`${API_BASE}/api/auth/otp/verify`, {
     method: 'POST',
     credentials: CREDENTIALS,
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -201,7 +237,7 @@ export async function verifyOtp(email: string, code: string): Promise<{ user: Ac
 }
 
 export async function logout(): Promise<{ success: boolean }> {
-  const res = await fetch(`${API_BASE}/api/auth/logout`, {
+  const res = await apiFetch(`${API_BASE}/api/auth/logout`, {
     method: 'POST',
     credentials: CREDENTIALS,
     headers: authHeaders(),
@@ -216,7 +252,7 @@ export async function getMe(): Promise<{
   guestQueriesRemaining: number | null;
   guestQueryLimit: number | null;
 }> {
-  const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: CREDENTIALS, headers: authHeaders() });
+  const res = await apiFetch(`${API_BASE}/api/auth/me`, { credentials: CREDENTIALS, headers: authHeaders() });
   return handleResponse(res);
 }
 
@@ -234,7 +270,7 @@ export async function uploadDocument(
   // Deliberately no Content-Type header here - the browser sets
   // multipart/form-data with the correct boundary itself for FormData
   // bodies; only the access-key header is ours to add.
-  const res = await fetch(`${API_BASE}/api/documents/upload`, {
+  const res = await apiFetch(`${API_BASE}/api/documents/upload`, {
     method: 'POST',
     credentials: CREDENTIALS,
     body: formData,
@@ -246,7 +282,7 @@ export async function uploadDocument(
 export async function getDocumentStatus(
   documentId: string
 ): Promise<{ documentId: string; status: string; chunkCount: number; error?: string }> {
-  const res = await fetch(`${API_BASE}/api/documents/${documentId}/status`, {
+  const res = await apiFetch(`${API_BASE}/api/documents/${documentId}/status`, {
     credentials: CREDENTIALS,
     headers: authHeaders(),
   });
@@ -254,12 +290,12 @@ export async function getDocumentStatus(
 }
 
 export async function listDocuments(): Promise<{ documents: DocumentSummary[] }> {
-  const res = await fetch(`${API_BASE}/api/documents`, { credentials: CREDENTIALS, headers: authHeaders() });
+  const res = await apiFetch(`${API_BASE}/api/documents`, { credentials: CREDENTIALS, headers: authHeaders() });
   return handleResponse(res);
 }
 
 export async function deleteDocument(documentId: string): Promise<{ success: boolean }> {
-  const res = await fetch(`${API_BASE}/api/documents/${documentId}`, {
+  const res = await apiFetch(`${API_BASE}/api/documents/${documentId}`, {
     method: 'DELETE',
     credentials: CREDENTIALS,
     headers: authHeaders(),
@@ -271,7 +307,7 @@ export async function moveDocumentToFolder(
   documentId: string,
   folderId: string | null
 ): Promise<{ id: string; folderId: string | null }> {
-  const res = await fetch(`${API_BASE}/api/documents/${documentId}/folder`, {
+  const res = await apiFetch(`${API_BASE}/api/documents/${documentId}/folder`, {
     method: 'PATCH',
     credentials: CREDENTIALS,
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -283,12 +319,12 @@ export async function moveDocumentToFolder(
 // ---------- Folders ----------
 
 export async function listFolders(): Promise<{ folders: Folder[] }> {
-  const res = await fetch(`${API_BASE}/api/folders`, { credentials: CREDENTIALS, headers: authHeaders() });
+  const res = await apiFetch(`${API_BASE}/api/folders`, { credentials: CREDENTIALS, headers: authHeaders() });
   return handleResponse(res);
 }
 
 export async function createFolder(name: string): Promise<{ folder: Folder }> {
-  const res = await fetch(`${API_BASE}/api/folders`, {
+  const res = await apiFetch(`${API_BASE}/api/folders`, {
     method: 'POST',
     credentials: CREDENTIALS,
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -298,7 +334,7 @@ export async function createFolder(name: string): Promise<{ folder: Folder }> {
 }
 
 export async function deleteFolder(folderId: string): Promise<{ success: boolean }> {
-  const res = await fetch(`${API_BASE}/api/folders/${folderId}`, {
+  const res = await apiFetch(`${API_BASE}/api/folders/${folderId}`, {
     method: 'DELETE',
     credentials: CREDENTIALS,
     headers: authHeaders(),
@@ -309,7 +345,7 @@ export async function deleteFolder(folderId: string): Promise<{ success: boolean
 // ---------- Conversations ----------
 
 export async function createConversation(): Promise<{ conversationId: string; title: string }> {
-  const res = await fetch(`${API_BASE}/api/conversations`, {
+  const res = await apiFetch(`${API_BASE}/api/conversations`, {
     method: 'POST',
     credentials: CREDENTIALS,
     headers: authHeaders(),
@@ -318,12 +354,12 @@ export async function createConversation(): Promise<{ conversationId: string; ti
 }
 
 export async function listConversations(): Promise<{ conversations: ConversationSummary[] }> {
-  const res = await fetch(`${API_BASE}/api/conversations`, { credentials: CREDENTIALS, headers: authHeaders() });
+  const res = await apiFetch(`${API_BASE}/api/conversations`, { credentials: CREDENTIALS, headers: authHeaders() });
   return handleResponse(res);
 }
 
 export async function getConversation(conversationId: string): Promise<ConversationDetail> {
-  const res = await fetch(`${API_BASE}/api/conversations/${conversationId}`, {
+  const res = await apiFetch(`${API_BASE}/api/conversations/${conversationId}`, {
     credentials: CREDENTIALS,
     headers: authHeaders(),
   });
@@ -331,7 +367,7 @@ export async function getConversation(conversationId: string): Promise<Conversat
 }
 
 export async function deleteConversation(conversationId: string): Promise<{ success: boolean }> {
-  const res = await fetch(`${API_BASE}/api/conversations/${conversationId}`, {
+  const res = await apiFetch(`${API_BASE}/api/conversations/${conversationId}`, {
     method: 'DELETE',
     credentials: CREDENTIALS,
     headers: authHeaders(),
@@ -496,7 +532,7 @@ export async function applyRevision(
   messageId: string,
   revision: { content: string; sources: Source[]; verified: boolean }
 ): Promise<Message> {
-  const res = await fetch(`${API_BASE}/api/conversations/${conversationId}/messages/${messageId}/revision`, {
+  const res = await apiFetch(`${API_BASE}/api/conversations/${conversationId}/messages/${messageId}/revision`, {
     method: 'PATCH',
     credentials: CREDENTIALS,
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
