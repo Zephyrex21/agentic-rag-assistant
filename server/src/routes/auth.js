@@ -33,6 +33,13 @@ function errorResponse(res, status, code, message, extra) {
   return res.status(status).json({ error: { code, message, ...extra } });
 }
 
+// Sets the httpOnly cookie (a same-origin deployment's session mechanism -
+// see attachUser's comment for why it's a fallback, not the primary path)
+// AND returns the raw token, so the caller can also hand it back in the
+// JSON response body for the client to store itself and send as an
+// Authorization header on every subsequent request (see lib/api.ts's
+// getSessionToken) - the mechanism that actually works across the
+// separate-domain deployment this app is commonly run as.
 function setSessionCookie(res, userId) {
   const token = signToken(userId);
   res.cookie(COOKIE_NAME, token, {
@@ -42,6 +49,7 @@ function setSessionCookie(res, userId) {
     maxAge: COOKIE_MAX_AGE_MS,
     path: '/',
   });
+  return token;
 }
 
 // POST /api/auth/otp/request - starts (or restarts) a sign-in: generates a
@@ -164,8 +172,11 @@ router.post('/otp/verify', async (req, res) => {
     // within its expiry window.
     await otpStore.deleteByEmail(normalizedEmail);
     const user = await userStore.findOrCreateByEmail(normalizedEmail);
-    setSessionCookie(res, user.id);
-    res.json({ user: { id: user.id, email: user.email } });
+    const token = setSessionCookie(res, user.id);
+    // token is returned alongside the cookie - see setSessionCookie's own
+    // comment for why the client needs it directly rather than relying on
+    // the cookie alone.
+    res.json({ user: { id: user.id, email: user.email }, token });
   } catch (err) {
     console.error('[auth] otp/verify failed:', err.message);
     errorResponse(res, 500, 'OTP_VERIFY_FAILED', 'Something went wrong verifying your code. Please try again.');

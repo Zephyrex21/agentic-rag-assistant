@@ -169,7 +169,7 @@ test('POST /api/auth/otp/verify - hitting the attempt limit invalidates the code
   assert.strictEqual(deletedEmail, 'real@example.com');
 });
 
-test('POST /api/auth/otp/verify - the correct code signs in (creating the account on a first-time email) and sets a session cookie', async (t) => {
+test('POST /api/auth/otp/verify - the correct code signs in (creating the account on a first-time email), returns a bearer token, AND sets a session cookie', async (t) => {
   t.mock.method(otpStore, 'findByEmail', async () => ({
     email: 'new@example.com',
     codeHash: otp.hashCode('123456'),
@@ -186,6 +186,8 @@ test('POST /api/auth/otp/verify - the correct code signs in (creating the accoun
   assert.strictEqual(res.status, 200);
   assert.strictEqual(res.body.user.email, 'new@example.com');
   assert.strictEqual(deletedEmail, 'new@example.com', 'FAIL: a successfully-used code must be consumed, not reusable');
+  assert.strictEqual(typeof res.body.token, 'string', 'FAIL: expected a bearer token in the response body');
+  assert.ok(res.body.token.length > 0);
   const setCookie = res.headers['set-cookie']?.join(';') || '';
   assert.ok(setCookie.includes('session='), 'FAIL: expected a session cookie to be set');
   assert.ok(/HttpOnly/i.test(setCookie), 'FAIL: the session cookie must be HttpOnly');
@@ -215,6 +217,63 @@ test('GET /api/auth/me - reports the logged-in user for a valid session cookie',
   assert.strictEqual(res.status, 200);
   assert.strictEqual(res.body.user.id, 'user-1');
   assert.strictEqual(res.body.user.email, 'real@example.com');
+});
+
+// Regression coverage for a real bug: on this app's cross-origin
+// deployment shape (frontend and backend on separate domains), the
+// session COOKIE is silently never sent back on requests from the
+// frontend at all (SameSite=Lax blocks it for cross-site fetches) - a
+// person could complete OTP verification successfully, reload, and still
+// show up as a guest. The fix is the Authorization header path in
+// middleware/userAuth.js; this test exercises that path with NO cookie
+// present at all, the same as a real cross-origin request would look.
+test('GET /api/auth/me - reports the logged-in user from an Authorization: Bearer header, with no cookie at all', async (t) => {
+  t.mock.method(userStore, 'findById', async (id) => ({ id, email: 'real@example.com' }));
+
+  const { signToken } = require('../src/services/authTokens');
+  const token = signToken('user-1');
+
+  const res = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${token}`);
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.user.id, 'user-1');
+  assert.strictEqual(res.body.user.email, 'real@example.com');
+});
+
+test('GET /api/auth/me - the Authorization header wins if both it and a (different, e.g. stale) cookie are present', async (t) => {
+  t.mock.method(userStore, 'findById', async (id) => (id === 'user-fresh' ? { id, email: 'fresh@example.com' } : null));
+
+  const { signToken } = require('../src/services/authTokens');
+  const freshToken = signToken('user-fresh');
+  const staleToken = signToken('user-stale-deleted');
+
+  const res = await request(app)
+    .get('/api/auth/me')
+    .set('Authorization', `Bearer ${freshToken}`)
+    .set('Cookie', `session=${staleToken}`);
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.user.email, 'fresh@example.com', 'FAIL: the header should take priority over the cookie');
+});
+
+test('POST /api/auth/otp/verify -> the returned token immediately works as a Bearer header on the very next request (full flow, no cookie involved)', async (t) => {
+  t.mock.method(otpStore, 'findByEmail', async () => ({
+    email: 'new@example.com',
+    codeHash: otp.hashCode('123456'),
+    attempts: 0,
+    expiresAt: new Date(Date.now() + 60000).toISOString(),
+  }));
+  t.mock.method(otpStore, 'deleteByEmail', async () => {});
+  t.mock.method(userStore, 'findOrCreateByEmail', async (email) => ({ id: 'user-1', email, createdAt: 'now' }));
+  t.mock.method(userStore, 'findById', async (id) => ({ id, email: 'new@example.com' }));
+
+  const verifyRes = await request(app).post('/api/auth/otp/verify').send({ email: 'new@example.com', code: '123456' });
+  const { token } = verifyRes.body;
+
+  // Deliberately a brand-new request with NO cookie jar shared with the
+  // call above - this is exactly what a page reload on a different origin
+  // than the backend looks like from the server's point of view.
+  const meRes = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${token}`);
+  assert.strictEqual(meRes.status, 200);
+  assert.strictEqual(meRes.body.user.email, 'new@example.com');
 });
 
 test('GET /api/auth/me - a cookie for a since-deleted account resolves as a guest, not an error', async (t) => {

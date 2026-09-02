@@ -82,12 +82,46 @@ function getGuestId(): string {
   }
 }
 
+// --- Session token (server: middleware/userAuth.js, routes/auth.js) ---
+//
+// A header + localStorage token, NOT (solely) a cookie - same reasoning as
+// the guest id above, but this one matters even more: it's what
+// distinguishes a signed-in person from a guest at all. The account
+// session cookie (COOKIE_NAME='session' server-side) is SameSite=Lax,
+// which reliably works for a same-origin deployment but is silently never
+// sent back on a cross-site fetch in this app's other common deployment
+// shape (frontend/backend on separate domains) - meaning someone could
+// verify an OTP code successfully, get a cookie set, reload, and still
+// show up as a guest, because the reload's own request never included it.
+// Storing the token returned by /otp/verify here and sending it as
+// `Authorization: Bearer <token>` sidesteps that entirely.
+const SESSION_TOKEN_STORAGE_KEY = 'rag_session_token';
+
+export function getSessionToken(): string {
+  try {
+    return localStorage.getItem(SESSION_TOKEN_STORAGE_KEY) || '';
+  } catch {
+    return ''; // localStorage can throw in some locked-down/private-browsing contexts
+  }
+}
+
+export function setSessionToken(token: string): void {
+  try {
+    if (token) localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, token);
+    else localStorage.removeItem(SESSION_TOKEN_STORAGE_KEY);
+  } catch {
+    // Non-fatal - same as setAccessKey above, just won't persist here
+  }
+}
+
 function authHeaders(): Record<string, string> {
   const key = getAccessKey();
   const guestId = getGuestId();
+  const sessionToken = getSessionToken();
   return {
     ...(key ? { 'X-App-Access-Key': key } : {}),
     ...(guestId ? { [GUEST_ID_HEADER]: guestId } : {}),
+    ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
   };
 }
 
@@ -233,7 +267,14 @@ export async function verifyOtp(email: string, code: string): Promise<{ user: Ac
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ email, code }),
   });
-  return handleResponse(res);
+  const result = await handleResponse<{ user: AccountUser; token: string }>(res);
+  // Stored immediately (before returning) so it's already in place for the
+  // very next call this triggers - see AuthContext.verifyOtp, which
+  // reloads the page right after this resolves. See getSessionToken's own
+  // comment for why this needs to be a header/localStorage token at all,
+  // not just the cookie the server also sets alongside it.
+  setSessionToken(result.token);
+  return { user: result.user };
 }
 
 export async function logout(): Promise<{ success: boolean }> {
@@ -242,7 +283,12 @@ export async function logout(): Promise<{ success: boolean }> {
     credentials: CREDENTIALS,
     headers: authHeaders(),
   });
-  return handleResponse(res);
+  const result = await handleResponse<{ success: boolean }>(res);
+  // Cleared regardless of the response - there's no scenario where keeping
+  // a stale token around after asking to log out is the right call, even
+  // if the server-side cookie-clear itself somehow failed.
+  setSessionToken('');
+  return result;
 }
 
 export async function getMe(): Promise<{

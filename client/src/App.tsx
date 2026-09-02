@@ -20,6 +20,34 @@ const MainAppView = lazy(() => import('./MainAppView'));
 
 type View = 'hero' | 'app';
 
+// Persisted in sessionStorage (not localStorage) specifically so a reload
+// - which both AuthContext's verifyOtp (sign-in) and logout trigger
+// deliberately, see their own comments - lands back wherever the person
+// actually was, not always back at the landing page. sessionStorage
+// (rather than localStorage) is the right scope for this: it survives a
+// reload within the same tab, which is all this needs, but still resets
+// for a genuinely fresh visit in a new tab - the hero page staying the
+// default first-ever experience is intentional, this is only about not
+// undoing "I already clicked Enter the assistant" out from under someone
+// via a reload they didn't initiate themselves.
+const VIEW_STORAGE_KEY = 'rag_view';
+
+function getInitialView(): View {
+  try {
+    return sessionStorage.getItem(VIEW_STORAGE_KEY) === 'app' ? 'app' : 'hero';
+  } catch {
+    return 'hero'; // sessionStorage can throw in some locked-down/private-browsing contexts
+  }
+}
+
+function persistView(view: View) {
+  try {
+    sessionStorage.setItem(VIEW_STORAGE_KEY, view);
+  } catch {
+    // Non-fatal - the view just won't survive a reload in this context
+  }
+}
+
 function LoadingFallback() {
   // Deliberately minimal and quick, not a branded splash screen - this
   // only shows for the brief moment the lazy chunk is fetching, which on
@@ -41,7 +69,12 @@ function LoadingFallback() {
 }
 
 function AppContent() {
-  const [view, setView] = useState<View>('hero');
+  const [view, setViewState] = useState<View>(getInitialView);
+
+  const setView = (next: View) => {
+    setViewState(next);
+    persistView(next);
+  };
 
   return (
     <AnimatePresence mode="wait">
