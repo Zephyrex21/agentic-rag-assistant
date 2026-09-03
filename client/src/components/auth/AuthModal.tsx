@@ -3,6 +3,8 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, ShieldCheck, AlertCircle, ArrowLeft, Coffee } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { getOAuthUrl } from '../../lib/api';
+import { GoogleIcon, GithubIcon } from '../icons/BrandIcons';
 
 const CODE_LENGTH = 6;
 const RESEND_COOLDOWN_SECONDS = 45; // mirrors server/src/routes/auth.js's RESEND_COOLDOWN_MS
@@ -79,7 +81,7 @@ export function AuthModal({ open, onOpenChange, initialMode = 'signin', forced =
   const [isColdStarting, setIsColdStarting] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
   const digitRefs = useRef<(HTMLInputElement | null)[]>([]);
-  const { requestOtp, verifyOtp, authError, clearAuthError } = useAuth();
+  const { requestOtp, verifyOtp, authError, clearAuthError, oauthProviders } = useAuth();
 
   // Arms only while a request is actually in flight - see apiFetch's own
   // 75s hard timeout in lib/api.ts for what happens if this never
@@ -243,7 +245,39 @@ export function AuthModal({ open, onOpenChange, initialMode = 'signin', forced =
                         : copy.subtitle}
                     </p>
 
-                    <form onSubmit={sendCode} className="mt-5 flex flex-col gap-3">
+                    {(oauthProviders.google || oauthProviders.github) && (
+                      <>
+                        <div className="mt-5 flex flex-col gap-2">
+                          {oauthProviders.google && (
+                            <button
+                              type="button"
+                              onClick={() => (window.location.href = getOAuthUrl('google'))}
+                              className="flex cursor-pointer items-center justify-center gap-2.5 rounded-xl border border-border bg-background py-2.5 text-[14px] font-medium text-ink transition-colors hover:bg-surface"
+                            >
+                              <GoogleIcon size={16} />
+                              Continue with Google
+                            </button>
+                          )}
+                          {oauthProviders.github && (
+                            <button
+                              type="button"
+                              onClick={() => (window.location.href = getOAuthUrl('github'))}
+                              className="flex cursor-pointer items-center justify-center gap-2.5 rounded-xl border border-border bg-background py-2.5 text-[14px] font-medium text-ink transition-colors hover:bg-surface"
+                            >
+                              <GithubIcon size={16} />
+                              Continue with GitHub
+                            </button>
+                          )}
+                        </div>
+                        <div className="mt-4 flex items-center gap-3">
+                          <div className="h-px flex-1 bg-border" />
+                          <span className="text-[11px] uppercase tracking-wide text-ink-muted">or</span>
+                          <div className="h-px flex-1 bg-border" />
+                        </div>
+                      </>
+                    )}
+
+                    <form onSubmit={sendCode} className="mt-4 flex flex-col gap-3">
                       <div className="relative">
                         <Mail size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-muted" />
                         <input

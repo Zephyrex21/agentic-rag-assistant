@@ -10,6 +10,7 @@ import { AmbientBackground } from './components/AmbientBackground';
 import { ColdStartNotice } from './components/ColdStartNotice';
 import { AccessKeyGate } from './components/AccessKeyGate';
 import { GuestLimitGate } from './components/GuestLimitGate';
+import { OAuthCallbackHandler } from './components/OAuthCallbackHandler';
 import { LogoMark } from './components/LogoMark';
 
 // Split out of the initial bundle - see MainAppView.tsx for why. The
@@ -103,6 +104,7 @@ function App() {
               <ColdStartNotice />
               <AccessKeyGate />
               <GuestLimitGate />
+              <OAuthCallbackHandler />
               <AppContent />
             </ConversationsProvider>
           </DocumentsProvider>

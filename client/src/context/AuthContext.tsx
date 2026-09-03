@@ -1,6 +1,15 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { getMe, logout as apiLogout, requestOtp as apiRequestOtp, verifyOtp as apiVerifyOtp, type AccountUser } from '../lib/api';
+import {
+  getMe,
+  logout as apiLogout,
+  requestOtp as apiRequestOtp,
+  verifyOtp as apiVerifyOtp,
+  type AccountUser,
+  type OAuthProviders,
+} from '../lib/api';
 import { withRetry } from '../lib/retry';
+
+const NO_OAUTH_PROVIDERS: OAuthProviders = { google: false, github: false };
 
 interface AuthContextValue {
   user: AccountUser | null;
@@ -13,10 +22,19 @@ interface AuthContextValue {
   guestQueriesRemaining: number | null;
   guestQueryLimit: number | null;
   setGuestQueriesRemaining: (remaining: number | null) => void;
+  // Which "Continue with X" buttons AuthModal should actually render - see
+  // getMe()'s own comment. Defaults to all-false until the initial getMe()
+  // resolves, so no button flashes into existence only to disappear.
+  oauthProviders: OAuthProviders;
   requestOtp: (email: string) => Promise<{ expiresInSeconds: number }>;
   verifyOtp: (email: string, code: string) => Promise<void>;
   logout: () => Promise<void>;
   clearAuthError: () => void;
+  // Public setter, not just clearAuthError - lets OAuthCallbackHandler.tsx
+  // surface a provider-side failure (e.g. "sign-in was cancelled") the
+  // same way a failed OTP attempt does, without that component needing
+  // its own separate error-display mechanism.
+  setAuthError: (message: string) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -27,6 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authError, setAuthError] = useState<string | null>(null);
   const [guestQueriesRemaining, setGuestQueriesRemaining] = useState<number | null>(null);
   const [guestQueryLimit, setGuestQueryLimit] = useState<number | null>(null);
+  const [oauthProviders, setOauthProviders] = useState<OAuthProviders>(NO_OAUTH_PROVIDERS);
 
   useEffect(() => {
     // One retry after a short delay - same startup-race smoothing every
@@ -35,16 +54,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // an actual failure would look, so there's nothing further to surface
     // to the person if this never succeeds - it just quietly stays a guest.
     withRetry(getMe)
-      .then(({ user, guestQueriesRemaining, guestQueryLimit }) => {
+      .then(({ user, guestQueriesRemaining, guestQueryLimit, oauthProviders }) => {
         setUser(user);
         setGuestQueriesRemaining(guestQueriesRemaining);
         setGuestQueryLimit(guestQueryLimit);
+        setOauthProviders(oauthProviders ?? NO_OAUTH_PROVIDERS);
       })
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
   }, []);
 
-  // Step 1 of sign-in - sends a fresh 6-digit code to this email (see
+  // Step 1 of OTP sign-in - sends a fresh 6-digit code to this email (see
   // server/src/routes/auth.js's /otp/request). Never creates an account by
   // itself and never says whether this email already has one - that only
   // happens (implicitly) on a successful verifyOtp below, so there's
@@ -66,7 +86,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // refresh - a full reload guarantees there is no possible leftover state
   // from a different account/guest session anywhere in memory, which
   // piecemeal refetching would need to get perfectly right in every
-  // context to match.
+  // context to match. OAuthCallbackHandler.tsx's success path follows the
+  // exact same reload pattern for the same reason.
   async function verifyOtp(email: string, code: string) {
     setAuthError(null);
     try {
@@ -104,10 +125,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         guestQueriesRemaining,
         guestQueryLimit,
         setGuestQueriesRemaining,
+        oauthProviders,
         requestOtp,
         verifyOtp,
         logout,
         clearAuthError,
+        setAuthError,
       }}
     >
       {children}

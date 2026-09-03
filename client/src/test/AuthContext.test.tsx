@@ -36,7 +36,7 @@ async function renderProbe() {
 
 describe('AuthContext', () => {
   beforeEach(() => {
-    vi.mocked(getMe).mockResolvedValue({ user: null, guestQueriesRemaining: 2, guestQueryLimit: 2 });
+    vi.mocked(getMe).mockResolvedValue({ user: null, guestQueriesRemaining: 2, guestQueryLimit: 2, oauthProviders: { google: false, github: false } });
   });
 
   it('defaults to guest (user: null) when there is no session', async () => {
@@ -45,7 +45,7 @@ describe('AuthContext', () => {
   });
 
   it('reflects a logged-in user once getMe resolves one', async () => {
-    vi.mocked(getMe).mockResolvedValue({ user: { id: 'u1', email: 'person@example.com' }, guestQueriesRemaining: null, guestQueryLimit: null });
+    vi.mocked(getMe).mockResolvedValue({ user: { id: 'u1', email: 'person@example.com' }, guestQueriesRemaining: null, guestQueryLimit: null, oauthProviders: { google: false, github: false } });
     await renderProbe();
     expect(screen.getByText('logged in as person@example.com')).toBeInTheDocument();
   });

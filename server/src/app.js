@@ -11,6 +11,7 @@ const conversationsRouter = require('./routes/conversations');
 const foldersRouter = require('./routes/folders');
 const usageRouter = require('./routes/usage');
 const { router: authRouter } = require('./routes/auth');
+const oauthRouter = require('./routes/oauth');
 const logger = require('./utils/logger');
 const { KNOWN_PROBLEMATIC_MODELS } = require('./services/modelFallback');
 const healthCheck = require('./services/healthCheck');
@@ -78,6 +79,22 @@ app.use(cookieParser());
 // on top of the general one for the specific routes that spend real
 // Groq/Jina/Pinecone quota per request.
 app.use('/api', generalLimiter);
+
+// Mounted BEFORE requireAppAccessKey below - deliberately, not an
+// oversight. Both routes in oauth.js are reached via a real top-level
+// browser navigation (clicking a link/window.location.href), never a
+// fetch() call - and a navigation cannot attach the custom
+// X-App-Access-Key header every other request in this app sends (see
+// middleware/auth.js). There is no navigation-compatible way to satisfy
+// that gate at all (a query-string key would work but leaks into browser
+// history/referrers/access logs for comparatively little benefit here).
+// The accepted risk is narrow: skipping this gate lets an uninvited
+// visitor start and complete an OAuth sign-in on a key-protected
+// deployment, ending up with a legitimately-authenticated account for
+// themselves - but every actual API route that spends quota or touches
+// data (documents/query/conversations/etc.) is still fully gated below,
+// so that account is otherwise useless to them without the access key.
+app.use('/api/auth/oauth', oauthRouter);
 
 // APP_ACCESS_KEY is optional - unset (the default) skips this entirely,
 // same opt-in pattern as ALLOWED_ORIGIN above and every pipeline toggle in

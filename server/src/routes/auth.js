@@ -6,6 +6,7 @@ const emailService = require('../services/emailService');
 const { signToken, TOKEN_TTL } = require('../services/authTokens');
 const { COOKIE_NAME } = require('../middleware/userAuth');
 const { getGuestQueriesRemaining, GUEST_QUERY_LIMIT } = require('../middleware/guestQueryLimit');
+const oauthProviders = require('../services/oauthProviders');
 
 const router = express.Router();
 
@@ -201,6 +202,11 @@ router.get('/me', (req, res) => {
     user: req.user,
     guestQueriesRemaining: req.user ? null : getGuestQueriesRemaining(req.guestId),
     guestQueryLimit: req.user ? null : GUEST_QUERY_LIMIT,
+    // Which OAuth providers this deployment actually has credentials
+    // configured for - lets the client only render buttons that will
+    // work, instead of a "Continue with Google" that's guaranteed to
+    // redirect straight to an error because GOOGLE_CLIENT_ID was never set.
+    oauthProviders: Object.fromEntries(oauthProviders.PROVIDER_NAMES.map((p) => [p, oauthProviders.isProviderConfigured(p)])),
   });
 });
 

@@ -291,15 +291,35 @@ export async function logout(): Promise<{ success: boolean }> {
   return result;
 }
 
+export interface OAuthProviders {
+  google: boolean;
+  github: boolean;
+}
+
 export async function getMe(): Promise<{
   user: AccountUser | null;
   // Both null for a signed-in user - only meaningful for a guest. See
   // server/src/middleware/guestQueryLimit.js.
   guestQueriesRemaining: number | null;
   guestQueryLimit: number | null;
+  // Which OAuth providers this deployment actually has credentials for -
+  // see server/src/services/oauthProviders.js. Used to only render a
+  // "Continue with X" button for a provider that will actually work.
+  oauthProviders: OAuthProviders;
 }> {
   const res = await apiFetch(`${API_BASE}/api/auth/me`, { credentials: CREDENTIALS, headers: authHeaders() });
   return handleResponse(res);
+}
+
+// Not a fetch() call - this is meant to be assigned straight to
+// window.location.href (see AuthModal.tsx), a real top-level browser
+// navigation through the OAuth provider and back (see
+// server/src/routes/oauth.js). authHeaders() has no way to attach itself
+// to a navigation the way it does every other call in this file, which is
+// exactly why that whole route is mounted ahead of the access-key gate
+// server-side - see app.js's comment at that mount point.
+export function getOAuthUrl(provider: keyof OAuthProviders): string {
+  return `${API_BASE}/api/auth/oauth/${provider}`;
 }
 
 // ---------- Documents ----------
