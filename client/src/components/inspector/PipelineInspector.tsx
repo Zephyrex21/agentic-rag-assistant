@@ -36,6 +36,95 @@ function formatMs(ms: number) {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+/** Finds a stage by key without throwing when it's absent - not every
+ * stage appears in every trace (e.g. 'planning' is agentic-only). */
+function findStage(trace: PipelineTrace, key: TraceStage['key']) {
+  return trace.stages.find((s) => s.key === key);
+}
+
+/** A small top-of-modal scorecard - the handful of numbers someone
+ * skimming the trace actually wants first, pulled from whichever stages
+ * happen to have them (every field is optional - a fixed-pipeline trace
+ * and an agentic one don't carry the same stages at all). Nothing here is
+ * computed or estimated; it's the same data the stage list below shows,
+ * just surfaced before it instead of after. */
+function SummaryStrip({ trace }: { trace: PipelineTrace }) {
+  const rerank = findStage(trace, 'rerank');
+  const generation = findStage(trace, 'generation');
+  const verification = findStage(trace, 'verification');
+  const retrieval = findStage(trace, 'retrieval');
+
+  const chips: { icon: React.ComponentType<{ size?: number }>; label: string; tone?: 'good' | 'warn' }[] = [];
+
+  if (rerank?.data.candidatesIn !== undefined && generation?.data.chunksUsed !== undefined) {
+    chips.push({ icon: ListFilter, label: `${generation.data.chunksUsed} of ${rerank.data.candidatesIn} candidates used` });
+  }
+  if (retrieval?.data.vectorHits !== undefined || retrieval?.data.keywordHits !== undefined) {
+    const total = (retrieval?.data.vectorHits || 0) + (retrieval?.data.hybridSearchEnabled ? retrieval?.data.keywordHits || 0 : 0);
+    chips.push({ icon: Search, label: `${total} raw hits retrieved` });
+  }
+  if (verification) {
+    chips.push({
+      icon: verification.data.passed ? ShieldCheck : ShieldAlert,
+      label: verification.data.wasRevised ? 'Verified after revision' : verification.data.passed ? 'Verified' : 'Unsupported claim flagged',
+      tone: verification.data.passed ? 'good' : 'warn',
+    });
+  }
+
+  if (chips.length === 0) return null;
+
+  return (
+    <div className="mb-4 flex flex-wrap gap-2">
+      {chips.map(({ icon: Icon, label, tone }, i) => (
+        <span
+          key={i}
+          className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium"
+          style={
+            tone === 'warn'
+              ? { background: 'color-mix(in srgb, var(--highlight) 12%, transparent)', color: 'var(--highlight)' }
+              : tone === 'good'
+                ? { background: 'color-mix(in srgb, var(--accent) 12%, transparent)', color: 'var(--accent)' }
+                : { background: 'var(--surface)', color: 'var(--ink-muted)' }
+          }
+        >
+          <Icon size={11} />
+          {label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** A single-row "waterfall" - each stage's share of total time as a
+ * proportional, color-cycled segment, hover-titled with the exact
+ * duration. The stage list below already shows each duration individually;
+ * this exists purely to give the whole pipeline's shape at a glance before
+ * reading line by line, the way a real request-tracing tool would. */
+function DurationWaterfall({ trace }: { trace: PipelineTrace }) {
+  if (trace.totalMs <= 0) return null;
+  return (
+    <div className="mb-5">
+      <div className="flex h-2.5 w-full overflow-hidden rounded-full" style={{ background: 'var(--surface)' }}>
+        {trace.stages.map((stage, i) => {
+          const pct = Math.max(0.5, (stage.durationMs / trace.totalMs) * 100);
+          return (
+            <div
+              key={stage.key}
+              title={`${stage.label} - ${formatMs(stage.durationMs)}`}
+              className="h-full first:rounded-l-full last:rounded-r-full"
+              style={{
+                width: `${pct}%`,
+                background: 'var(--accent)',
+                opacity: 0.35 + (i / Math.max(1, trace.stages.length - 1)) * 0.5,
+              }}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /** Small non-interactive chunk reference chip - used for the rerank stage's kept/dropped lists. */
 function ChunkChip({ chunk, tone }: { chunk: TraceChunkRef; tone: 'kept' | 'dropped' }) {
   return (
@@ -299,22 +388,31 @@ export function PipelineInspectorTrigger({ trace }: { trace: PipelineTrace }) {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.15 }}
-                className="signal-theme fixed inset-0 z-[100] bg-overlay"
+                // Blurred, not just dimmed - backdrop-blur reads as looking
+                // "through frosted glass" at the still-legible chat behind
+                // it, which feels considerably more deliberate than a flat
+                // opacity fade over the same content. The tint itself is
+                // lighter than a typical full-fade overlay (color-mix
+                // against transparent, not the theme's opaque --overlay)
+                // since the blur alone already does most of the work of
+                // visually separating the modal from what's behind it.
+                className="signal-theme fixed inset-0 z-[100] backdrop-blur-md"
+                style={{ background: 'color-mix(in srgb, var(--overlay) 55%, transparent)' }}
               />
             </Dialog.Overlay>
             <Dialog.Content asChild aria-describedby={undefined}>
               <motion.div
-                initial={{ opacity: 0, scale: 0.96, y: -8 }}
+                initial={{ opacity: 0, scale: 0.96, y: 8 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.96, y: -8 }}
+                exit={{ opacity: 0, scale: 0.96, y: 8 }}
                 transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                className="signal-theme font-signal-body fixed left-1/2 top-[8vh] z-[101] max-h-[84vh] w-[92vw] max-w-xl -translate-x-1/2 overflow-y-auto rounded-2xl"
+                className="signal-theme font-signal-body fixed left-1/2 top-1/2 z-[101] max-h-[85vh] w-[92vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl"
               >
-                <div className="glass-panel rounded-2xl p-5">
-                  <div className="mb-4 flex items-center justify-between">
+                <div className="glass-panel rounded-2xl p-6">
+                  <div className="mb-1 flex items-center justify-between">
                     <div>
-                      <div className="flex items-center gap-1.5">
-                        <Dialog.Title className="text-sm font-semibold text-ink">Pipeline Trace</Dialog.Title>
+                      <div className="flex items-center gap-2">
+                        <Dialog.Title className="text-base font-semibold text-ink">Pipeline Trace</Dialog.Title>
                         {trace.agentic && (
                           <span
                             className="flex items-center gap-1 rounded-full px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide"
@@ -331,10 +429,15 @@ export function PipelineInspectorTrigger({ trace }: { trace: PipelineTrace }) {
                     </div>
                     <Dialog.Close asChild>
                       <button type="button" className="cursor-pointer text-ink-muted hover:text-ink" aria-label="Close">
-                        <X size={16} />
+                        <X size={18} />
                       </button>
                     </Dialog.Close>
                   </div>
+
+                  <div className="my-4 h-px w-full" style={{ background: 'var(--border-color)' }} />
+
+                  <SummaryStrip trace={trace} />
+                  <DurationWaterfall trace={trace} />
 
                   {trace.noInfo && (
                     <p
