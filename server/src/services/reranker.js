@@ -1,9 +1,12 @@
 const { getClient } = require('./groqClient');
 const { withModelFallback } = require('./modelFallback');
 
-const MODEL = process.env.UTILITY_MODEL || 'llama-3.1-8b-instant';
-// Cross-paired with llm.js's default - see queryRewriter.js for the same reasoning.
-const FALLBACK_MODEL = process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-20b';
+// Groq has fully deprecated llama-3.1-8b-instant (see modelFallback.js's
+// KNOWN_PROBLEMATIC_MODELS) - gpt-oss-20b is the replacement, and also the
+// model with the highest free-tier TPM ceiling of the two used here.
+const MODEL = process.env.UTILITY_MODEL || 'openai/gpt-oss-20b';
+// The larger sibling, not a different family - see queryRewriter.js for why.
+const FALLBACK_MODEL = process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-120b';
 
 // Reranker only needs enough text to judge relevance, not the full chunk -
 // full text is still used for the actual answer generation step afterward.

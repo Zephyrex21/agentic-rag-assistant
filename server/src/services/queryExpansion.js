@@ -4,8 +4,10 @@ const { parseIntEnv } = require('../utils/envConfig');
 
 // Same lighter/cheaper model as reranking/rewriting/verification - this is
 // a mechanical rephrasing task, not a reasoning task.
-const MODEL = process.env.UTILITY_MODEL || 'llama-3.1-8b-instant';
-const FALLBACK_MODEL = process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-20b';
+// Groq has fully deprecated llama-3.1-8b-instant (see modelFallback.js's
+// KNOWN_PROBLEMATIC_MODELS) - gpt-oss-20b is the replacement.
+const MODEL = process.env.UTILITY_MODEL || 'openai/gpt-oss-20b';
+const FALLBACK_MODEL = process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-120b';
 
 // How many EXTRA phrasings to generate, on top of the original/rewritten
 // query. Kept small by default - each extra phrasing costs one more

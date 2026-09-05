@@ -14,9 +14,9 @@ const { parseIntEnv, parseFloatEnv } = require('../utils/envConfig');
 // is closer to a structured, mechanical judgment than open-ended reasoning.
 // Has its own env vars (rather than just reusing UTILITY_MODEL) so planning
 // quality can be tuned independently if it ever needs a stronger model.
-const PLANNER_MODEL = process.env.AGENTIC_PLANNER_MODEL || process.env.UTILITY_MODEL || 'llama-3.1-8b-instant';
+const PLANNER_MODEL = process.env.AGENTIC_PLANNER_MODEL || process.env.UTILITY_MODEL || 'openai/gpt-oss-20b';
 const PLANNER_MODEL_FALLBACK =
-  process.env.AGENTIC_PLANNER_MODEL_FALLBACK || process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-20b';
+  process.env.AGENTIC_PLANNER_MODEL_FALLBACK || process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-120b';
 
 // Max number of planner ROUND-TRIPS (LLM turns), not max tool calls - a
 // single turn can legitimately request more than one tool call in parallel

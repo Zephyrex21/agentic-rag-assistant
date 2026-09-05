@@ -3,8 +3,10 @@ const { withModelFallback, parseGroqError } = require('./modelFallback');
 
 // Same lighter model as reranking/rewriting - this is a judgment task, not
 // a reasoning task, and needs to stay cheap since it runs on every answer.
-const MODEL = process.env.UTILITY_MODEL || 'llama-3.1-8b-instant';
-const FALLBACK_MODEL = process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-20b';
+// Groq has fully deprecated llama-3.1-8b-instant (see modelFallback.js's
+// KNOWN_PROBLEMATIC_MODELS) - gpt-oss-20b is the replacement.
+const MODEL = process.env.UTILITY_MODEL || 'openai/gpt-oss-20b';
+const FALLBACK_MODEL = process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-120b';
 
 // Deliberately generous - a truncated source is worse than no truncation
 // here: if a chunk's supporting detail for some claim falls past the cut,

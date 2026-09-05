@@ -129,13 +129,13 @@ process.on('unhandledRejection', (reason) => {
 
 app.get('/health', async (req, res) => {
   const configuredModels = {
-    GENERATION_MODEL: process.env.GENERATION_MODEL || 'llama-3.3-70b-versatile',
+    GENERATION_MODEL: process.env.GENERATION_MODEL || 'openai/gpt-oss-20b',
     GENERATION_MODEL_FALLBACK: process.env.GENERATION_MODEL_FALLBACK || 'openai/gpt-oss-120b',
-    UTILITY_MODEL: process.env.UTILITY_MODEL || 'llama-3.1-8b-instant',
-    UTILITY_MODEL_FALLBACK: process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-20b',
-    AGENTIC_PLANNER_MODEL: process.env.AGENTIC_PLANNER_MODEL || process.env.UTILITY_MODEL || 'llama-3.1-8b-instant',
+    UTILITY_MODEL: process.env.UTILITY_MODEL || 'openai/gpt-oss-20b',
+    UTILITY_MODEL_FALLBACK: process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-120b',
+    AGENTIC_PLANNER_MODEL: process.env.AGENTIC_PLANNER_MODEL || process.env.UTILITY_MODEL || 'openai/gpt-oss-20b',
     AGENTIC_PLANNER_MODEL_FALLBACK:
-      process.env.AGENTIC_PLANNER_MODEL_FALLBACK || process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-20b',
+      process.env.AGENTIC_PLANNER_MODEL_FALLBACK || process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-120b',
   };
   const modelWarnings = Object.entries(configuredModels)
     .filter(([, model]) => KNOWN_PROBLEMATIC_MODELS.includes(model))

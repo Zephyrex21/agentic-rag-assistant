@@ -3,15 +3,20 @@ const { getClient: getMistralClient } = require('./mistralClient');
 const { withModelFallback, withProviderFallback, parseGroqError } = require('./modelFallback');
 const usageTracker = require('./usageTracker');
 
-// llama-3.3-70b-versatile: current production-tier model on Groq, free-tier
-// eligible, not on the deprecation list as of the most recent notices (see
-// modelFallback.js). Not a reasoning model - kept deliberately, since low
-// latency + grounded/concise answers matter more here than deep reasoning,
-// and Groq's free-tier rate limits reward staying on faster models.
-const MODEL = process.env.GENERATION_MODEL || 'llama-3.3-70b-versatile';
-// Cross-family fallback (Llama vs OpenAI's open-weight line) so a single
-// vendor-family issue doesn't take down both the primary and the fallback
-// at once - same philosophy as the old Gemini setup's cross-pairing.
+// Groq has fully deprecated its Llama 3.x chat models (llama-3.3-70b-versatile
+// and llama-3.1-8b-instant included) - see modelFallback.js's
+// KNOWN_PROBLEMATIC_MODELS. openai/gpt-oss-20b is the safe default now: it's
+// what Groq itself recommends as the replacement, and critically, smaller
+// models get a much higher free-tier tokens-per-minute (TPM) ceiling than
+// large ones - gpt-oss-120b's free-tier TPM cap (8000 as of this writing) is
+// genuinely too small for a typical agentic-RAG prompt once retrieved
+// context + conversation history are folded in, which is exactly the
+// failure this default swap fixes (was previously erroring out to the
+// fallback below on almost every real request).
+const MODEL = process.env.GENERATION_MODEL || 'openai/gpt-oss-20b';
+// Cross-family fallback (still Groq-hosted, but the larger sibling model) -
+// only reached if the primary above genuinely errors (not just for quality),
+// so its own lower TPM ceiling matters less here than it would as a primary.
 const FALLBACK_MODEL = process.env.GENERATION_MODEL_FALLBACK || 'openai/gpt-oss-120b';
 // A different provider entirely (see mistralClient.js for why Mistral) -
 // this is the net that catches Groq itself being down/rate-limited, which

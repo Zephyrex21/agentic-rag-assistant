@@ -71,6 +71,8 @@ const KNOWN_PROBLEMATIC_MODELS = [
   'llama3-70b-8192',
   'llama-3.1-70b-versatile',
   'llama-3.3-70b-specdec',
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
   'deepseek-r1-distill-llama-70b',
   'llama-3.2-90b-vision-preview',
   'llama-3.2-1b-preview',

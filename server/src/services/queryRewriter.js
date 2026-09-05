@@ -3,10 +3,16 @@ const { withModelFallback } = require('./modelFallback');
 
 // Deliberately the lighter/cheaper model - this is a mechanical rewrite task,
 // not a reasoning task, so it doesn't need the same model as the real answer.
-const MODEL = process.env.UTILITY_MODEL || 'llama-3.1-8b-instant';
-// Cross-paired with llm.js's default (reverse of its pairing) - two
-// independent model families covering each other.
-const FALLBACK_MODEL = process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-20b';
+// Groq has fully deprecated llama-3.1-8b-instant (see modelFallback.js's
+// KNOWN_PROBLEMATIC_MODELS) - gpt-oss-20b is both the replacement Groq
+// itself recommends and the one with the highest free-tier TPM ceiling of
+// the models this app uses, which matters more for reliability than model
+// choice does for a mechanical task like this.
+const MODEL = process.env.UTILITY_MODEL || 'openai/gpt-oss-20b';
+// The larger sibling, not a different family - Llama's no longer a viable
+// second family for anything on Groq (see above), so the only remaining
+// cross-provider fallback lives one level up, in llm.js's Mistral tier.
+const FALLBACK_MODEL = process.env.UTILITY_MODEL_FALLBACK || 'openai/gpt-oss-120b';
 
 function buildRewritePrompt(question, history) {
   const historyText = history.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n');

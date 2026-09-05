@@ -27,7 +27,7 @@ async function testGroq() {
   }
   try {
     const client = new Groq({ apiKey });
-    const model = process.env.UTILITY_MODEL || 'llama-3.1-8b-instant';
+    const model = process.env.UTILITY_MODEL || 'openai/gpt-oss-20b';
     const res = await client.chat.completions.create({
       model,
       messages: [{ role: 'user', content: 'Reply with exactly one word: OK' }],
