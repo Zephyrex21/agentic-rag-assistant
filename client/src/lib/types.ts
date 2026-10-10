@@ -59,7 +59,7 @@ export interface AgentStep {
 }
 
 export interface TraceStage {
-  key: 'rewrite' | 'expansion' | 'retrieval' | 'dedup' | 'rerank' | 'generation' | 'verification' | 'planning';
+  key: 'rewrite' | 'expansion' | 'retrieval' | 'dedup' | 'rerank' | 'generation' | 'verification' | 'planning' | 'cache';
   label: string;
   durationMs: number;
   data: {
@@ -103,6 +103,11 @@ export interface TraceStage {
     skippedSearch?: boolean;
     totalSteps?: number;
     steps?: AgentStep[];
+    // cache - see server/src/services/answerCache.js
+    similarity?: number;
+    hitCount?: number;
+    cachedQuestion?: string;
+    createdAt?: string;
   };
 }
 
@@ -113,6 +118,12 @@ export interface PipelineTrace {
   // True when a tool-calling planner decided what/how many times to
   // search, instead of the fixed pipeline's always-exactly-once search.
   agentic?: boolean;
+  // True when the entire pipeline (rewrite through verification) was
+  // skipped because a semantically-equivalent question had already been
+  // answered and verified before - see server/src/services/answerCache.js.
+  // The single 'cache' stage in `stages` carries the similarity score and
+  // how many times this cached answer has now been reused.
+  cacheHit?: boolean;
 }
 
 export type MessageRole = 'user' | 'assistant';

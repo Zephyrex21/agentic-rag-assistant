@@ -16,6 +16,7 @@ import {
   Bot,
   ListTree,
   MessageCircle,
+  Zap,
 } from 'lucide-react';
 import { useState } from 'react';
 import type { PipelineTrace, TraceStage, TraceChunkRef, AgentStep } from '../../lib/types';
@@ -29,6 +30,7 @@ const STAGE_ICONS: Record<TraceStage['key'], React.ComponentType<{ size?: number
   generation: Sparkles,
   verification: ShieldCheck,
   planning: Bot,
+  cache: Zap,
 };
 
 function formatMs(ms: number) {
@@ -56,6 +58,9 @@ function SummaryStrip({ trace }: { trace: PipelineTrace }) {
 
   const chips: { icon: React.ComponentType<{ size?: number }>; label: string; tone?: 'good' | 'warn' }[] = [];
 
+  if (trace.cacheHit) {
+    chips.push({ icon: Zap, label: 'Served from semantic cache', tone: 'good' });
+  }
   if (rerank?.data.candidatesIn !== undefined && generation?.data.chunksUsed !== undefined) {
     chips.push({ icon: ListFilter, label: `${generation.data.chunksUsed} of ${rerank.data.candidatesIn} candidates used` });
   }
@@ -101,7 +106,10 @@ function SummaryStrip({ trace }: { trace: PipelineTrace }) {
  * this exists purely to give the whole pipeline's shape at a glance before
  * reading line by line, the way a real request-tracing tool would. */
 function DurationWaterfall({ trace }: { trace: PipelineTrace }) {
-  if (trace.totalMs <= 0) return null;
+  // A single-stage trace (a cache hit, or a no-info early exit) has
+  // nothing comparative to show - one full-width bar conveys nothing a
+  // reader couldn't already tell from the total time in the header.
+  if (trace.totalMs <= 0 || trace.stages.length <= 1) return null;
   return (
     <div className="mb-5">
       <div className="flex h-2.5 w-full overflow-hidden rounded-full" style={{ background: 'var(--surface)' }}>
@@ -145,6 +153,29 @@ function ChunkChip({ chunk, tone }: { chunk: TraceChunkRef; tone: 'kept' | 'drop
 
 function StageDetail({ stage }: { stage: TraceStage }) {
   const d = stage.data;
+
+  if (stage.key === 'cache') {
+    return (
+      <div className="flex flex-col gap-1.5 text-xs">
+        <p
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium"
+          style={{ background: 'color-mix(in srgb, var(--accent) 10%, transparent)', color: 'var(--accent)' }}
+        >
+          <Zap size={11} className="shrink-0" />
+          Served from cache - {Math.round((d.similarity as number) * 100)}% match to a previous question, no new
+          retrieval or generation calls made.
+        </p>
+        {typeof d.hitCount === 'number' && (
+          <p className="text-ink-muted">Reused {d.hitCount} time{d.hitCount === 1 ? '' : 's'} so far.</p>
+        )}
+        {typeof d.cachedQuestion === 'string' && (
+          <p className="text-ink-muted">
+            <span className="font-mono text-[10px] uppercase tracking-wide">originally asked</span> · {d.cachedQuestion}
+          </p>
+        )}
+      </div>
+    );
+  }
 
   if (stage.key === 'planning') {
     if (d.skippedSearch) {
