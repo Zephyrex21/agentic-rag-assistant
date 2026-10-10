@@ -20,37 +20,57 @@ function getIndex() {
 }
 
 /**
- * Upserts chunk vectors for a document.
- * @param {Array<{id: string, values: number[], metadata: object}>} vectors -
- *   each vector's metadata should already include a `userId` field (a real
- *   id, or the 'guest' sentinel - see ingestionWorker.js) so queryVectors's
- *   filter can scope to an owner. Pinecone doesn't have a clean way to
- *   filter on "this field is missing," unlike Postgres's real NULL the
- *   rest of this codebase uses for the same concept - the 'guest' sentinel
- *   sidesteps that by always giving the field a concrete, filterable value.
+ * Upserts vectors, optionally into a named namespace. Namespaces are a
+ * free partition within the SAME index/project (not a separate resource,
+ * not a paid tier feature) - used here so the answer cache (see
+ * services/answerCache.js) lives in its own 'answer-cache' namespace,
+ * completely isolated from document chunk vectors. That isolation matters
+ * for correctness, not just tidiness: without it, a cache-entry vector
+ * could theoretically surface as a "source chunk" in a real retrieval
+ * query, or vice versa.
+ * @param {Array<{id: string, values: number[], metadata: object}>} vectors
+ * @param {string} [namespace] - omit for the default namespace (all
+ *   existing document-chunk call sites - unaffected, unchanged behavior).
  */
-async function upsertVectors(vectors) {
+async function upsertVectors(vectors, namespace = undefined) {
   const index = getIndex();
+  const target = namespace ? index.namespace(namespace) : index;
   // Pinecone recommends batching upserts in groups of ~100
   const BATCH_SIZE = 100;
   for (let i = 0; i < vectors.length; i += BATCH_SIZE) {
     const batch = vectors.slice(i, i + BATCH_SIZE);
-    await index.upsert(batch);
+    await target.upsert(batch);
   }
 }
 
 /**
  * Similarity search - returns top-k matches with metadata.
+ * @param {string} [namespace] - see upsertVectors's comment.
  */
-async function queryVectors(vector, topK = 5, filter = undefined) {
+async function queryVectors(vector, topK = 5, filter = undefined, namespace = undefined) {
   const index = getIndex();
-  const result = await index.query({
+  const target = namespace ? index.namespace(namespace) : index;
+  const result = await target.query({
     vector,
     topK,
     includeMetadata: true,
     ...(filter ? { filter } : {}),
   });
   return result.matches || [];
+}
+
+/**
+ * Deletes specific vector IDs, optionally from a named namespace.
+ * @param {string} [namespace] - see upsertVectors's comment.
+ */
+async function deleteVectorIds(ids, namespace = undefined) {
+  if (!ids || ids.length === 0) return;
+  const index = getIndex();
+  const target = namespace ? index.namespace(namespace) : index;
+  const BATCH_SIZE = 1000;
+  for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+    await target.deleteMany(ids.slice(i, i + BATCH_SIZE));
+  }
 }
 
 /**
@@ -99,4 +119,4 @@ async function checkConnection() {
   return { vectorCount: stats.totalRecordCount ?? stats.totalVectorCount ?? null };
 }
 
-module.exports = { upsertVectors, queryVectors, deleteByDocumentId, checkConnection };
+module.exports = { upsertVectors, queryVectors, deleteByDocumentId, deleteVectorIds, checkConnection };

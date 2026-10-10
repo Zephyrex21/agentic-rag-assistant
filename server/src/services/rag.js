@@ -9,6 +9,7 @@ const { rerank } = require('./reranker');
 const { verifyAnswer } = require('./selfVerification');
 const { generateAnswerStream, generateAnswer } = require('./llm');
 const { buildTrace, buildAgenticTrace } = require('./traceBuilder');
+const answerCache = require('./answerCache');
 const { parseIntEnv, parseFloatEnv } = require('../utils/envConfig');
 
 const TOP_K = parseIntEnv('RETRIEVAL_TOP_K', 5, { min: 1 });
@@ -47,6 +48,13 @@ const ENABLE_PIPELINE_TRACE = process.env.ENABLE_PIPELINE_TRACE !== 'false';
 // the module doc comment on retrieveAndAnswerStream below for the full
 // contract and fallback behavior.
 const ENABLE_AGENTIC_MODE = process.env.ENABLE_AGENTIC_MODE !== 'false';
+// Checks for a semantically-equivalent question already answered within
+// the same owner+document scope BEFORE any of the real pipeline runs -
+// see answerCache.js. A hit skips rewriting, expansion, retrieval,
+// reranking, generation, AND verification entirely (several Groq calls
+// avoided per hit), at the cost of one embedding call + one Pinecone
+// query per question, hit or miss.
+const ENABLE_ANSWER_CACHE = process.env.ENABLE_ANSWER_CACHE !== 'false';
 
 // Heuristic, not an LLM call on purpose - this only needs to catch the
 // broad-question SHAPE (summaries, overviews, comparisons, "everything/all"
@@ -586,6 +594,18 @@ async function runBackgroundVerification({
     const trace = ENABLE_PIPELINE_TRACE
       ? traceRaw.mode === 'agentic' ? buildAgenticTrace(traceRaw) : buildTrace(traceRaw)
       : null;
+    // Only cached on an explicit pass - the other write() call site
+    // (retrieveAndAnswerStream, when ENABLE_SELF_VERIFICATION is off
+    // entirely) is the one that fires when there's no check to wait for at
+    // all. An answer that failed verification, or whose revision is only
+    // ever offered as a dismissible suggestion, never reaches the cache -
+    // better to answer a future near-duplicate question fresh than to
+    // confidently hand it something already flagged as unsupported once.
+    if (ENABLE_ANSWER_CACHE) {
+      answerCache
+        .write({ question, answer: fullAnswer, sources: finalSources, userId, documentIds })
+        .catch((err) => console.warn(`[rag] answer cache write failed: ${err.message}`));
+    }
     return { type: 'verified', verified: true, trace };
   }
 
@@ -680,6 +700,43 @@ async function* retrieveAndAnswerStream(question, options = {}) {
   // response's 'close' event) gets passed in.
   const { documentIds, history = [], isCancelled = () => false, userId = null } = options;
 
+  if (ENABLE_ANSWER_CACHE) {
+    const cacheCheckStart = Date.now();
+    const cacheHit = await answerCache.lookup({ question, userId, documentIds });
+    if (cacheHit) {
+      yield { type: 'sources', sources: cacheHit.sources };
+      yield { type: 'chunk', text: cacheHit.answer };
+      const trace = ENABLE_PIPELINE_TRACE
+        ? {
+            stages: [
+              {
+                key: 'cache',
+                label: 'Semantic Cache',
+                durationMs: Date.now() - cacheCheckStart,
+                data: {
+                  similarity: cacheHit.similarity,
+                  hitCount: cacheHit.hitCount,
+                  cachedQuestion: cacheHit.cachedQuestion,
+                  createdAt: cacheHit.createdAt,
+                },
+              },
+            ],
+            totalMs: Date.now() - streamStart,
+            noInfo: false,
+            agentic: false,
+            cacheHit: true,
+          }
+        : null;
+      // Cached answers were already verified (or verification was disabled
+      // entirely, in which case `true` here is exactly as meaningful as it
+      // was the first time this answer was generated) before ever being
+      // written - see the two write() call sites below - so there is
+      // nothing left to check in the background this time.
+      yield { type: 'done', answer: cacheHit.answer, sources: cacheHit.sources, verified: true, wasRevised: false, trace };
+      return;
+    }
+  }
+
   let retrieval = null;
   if (ENABLE_AGENTIC_MODE) {
     try {
@@ -742,7 +799,18 @@ async function* retrieveAndAnswerStream(question, options = {}) {
     trace: doneTrace,
   };
 
-  if (!ENABLE_SELF_VERIFICATION) return;
+  if (!ENABLE_SELF_VERIFICATION) {
+    // Nothing left to check before this answer is "final" - safe to cache
+    // now. See the other write() call site (inside runBackgroundVerification)
+    // for the case where verification IS enabled, which caches only after
+    // an explicit pass instead of here.
+    if (ENABLE_ANSWER_CACHE) {
+      answerCache
+        .write({ question, answer: fullAnswer, sources: finalSources, userId, documentIds })
+        .catch((err) => console.warn(`[rag] answer cache write failed: ${err.message}`));
+    }
+    return;
+  }
 
   // If the client is already gone by the time we'd start this, don't
   // bother - nobody's listening for the 'verified'/'revision_available'
