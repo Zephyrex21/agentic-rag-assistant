@@ -104,3 +104,53 @@ describe('isCitationHref', () => {
     expect(isCitationHref('citation:abc')).toBeNull();
   });
 });
+
+describe('plural / range citation groups (real regression: "(Sources 1-3)" rendered as literal text)', () => {
+  it('expands a plural range into one badge per source - the exact string from the bug report', () => {
+    expect(transformCitationsToLinks('Unit breakdown (Sources 1-3)')).toBe(
+      'Unit breakdown [1](citation:1) [2](citation:2) [3](citation:3)'
+    );
+    expect(transformCitationsToLinks('Labs (Sources 3-4)')).toBe('Labs [3](citation:3) [4](citation:4)');
+  });
+
+  it('handles plural comma lists, "and", "&", en dash and "to"', () => {
+    expect(transformCitationsToLinks('(Sources 1, 2)')).toBe('[1](citation:1) [2](citation:2)');
+    expect(transformCitationsToLinks('(Sources 1 and 2)')).toBe('[1](citation:1) [2](citation:2)');
+    expect(transformCitationsToLinks('(Sources 1 & 3)')).toBe('[1](citation:1) [3](citation:3)');
+    expect(transformCitationsToLinks('(Sources 1\u20133)')).toBe('[1](citation:1) [2](citation:2) [3](citation:3)');
+    expect(transformCitationsToLinks('(Sources 2 to 3)')).toBe('[2](citation:2) [3](citation:3)');
+  });
+
+  it('handles a single number mixed with a range inside one group', () => {
+    expect(transformCitationsToLinks('(Source 1, Source 3-5)')).toBe(
+      '[1](citation:1) [3](citation:3) [4](citation:4) [5](citation:5)'
+    );
+  });
+
+  it('parseAnswerSegments yields one citation segment per source in a range', () => {
+    const segments = parseAnswerSegments('Covered in (Sources 1-3).');
+    expect(segments.filter((s) => s.type === 'citation').map((s) => (s as { sourceNumber: number }).sourceNumber)).toEqual([1, 2, 3]);
+    expect(segments[0]).toEqual({ type: 'text', content: 'Covered in ' });
+    expect(segments[segments.length - 1]).toEqual({ type: 'text', content: '.' });
+  });
+
+  it('never turns ordinary parentheses that merely mention "Source" into badges', () => {
+    const text = 'Open (Source code is on GitHub), see (Sources: the annual report) and (Source 2 of the paper).';
+    expect(transformCitationsToLinks(text)).toBe(text);
+  });
+
+  it('leaves an unclosed group untouched (e.g. mid-stream) instead of mangling it', () => {
+    expect(transformCitationsToLinks('Streaming now (Sources 1-3')).toBe('Streaming now (Sources 1-3');
+  });
+
+  it('keeps a reversed or absurdly wide range to its two endpoints instead of expanding it', () => {
+    expect(transformCitationsToLinks('(Sources 5-3)')).toBe('[5](citation:5) [3](citation:3)');
+    expect(transformCitationsToLinks('(Sources 1-999)')).toBe('[1](citation:1) [999](citation:999)');
+  });
+
+  it('still handles every pre-existing shape exactly as before', () => {
+    expect(transformCitationsToLinks('(Source 1)')).toBe('[1](citation:1)');
+    expect(transformCitationsToLinks('(Source 1, Source 3)')).toBe('[1](citation:1) [3](citation:3)');
+    expect(transformCitationsToLinks('(source 5)')).toBe('[5](citation:5)');
+  });
+});

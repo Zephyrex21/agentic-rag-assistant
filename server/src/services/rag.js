@@ -141,20 +141,47 @@ const NO_INFO_ANSWER =
 
 const EXCERPT_LENGTH = 200;
 
-// Matches a whole citation group - a single "(Source 1)" OR a
-// comma-separated group like "(Source 1, Source 3)", which the generation
-// prompt explicitly asks the model to use when a claim draws on more than
-// one source (see llm.js's rule 3). A single-number-only regex would miss
-// grouped citations entirely, undercounting which sources were actually
-// cited.
+// A whole citation group. Accepts the shapes the generation prompt asks for -
+// "(Source 1)" and "(Source 1, Source 3)" - plus variants models produce
+// anyway: "(Sources 1, 2)", "(Sources 1 and 2)", "(Sources 1-3)" (also with an
+// en/em dash or "to"). Before this, "(Sources 1-3)" matched nothing, so those
+// sources were never counted as cited (and the client never made badges).
+// NOTE: client/src/lib/citations.ts keeps its own copy of this pattern.
+const CITATION_GROUP_RE = /\(Sources?\s+\d+(?:\s*(?:,|&|and|-|\u2013|\u2014|to)\s*(?:Sources?\s+)?\d+)*\)/i;
+
+// A range like 1-3 expands to 1,2,3. Capped so a malformed "(Sources 1-999)"
+// can never flood the result with hundreds of numbers.
+const MAX_CITATION_RANGE = 12;
+
+/** Turns one matched citation group into the source numbers it names. */
+function expandCitationGroup(group) {
+  const numbers = [];
+  const re = /(\d+)(?:\s*(?:-|\u2013|\u2014|\bto\b)\s*(?:Sources?\s+)?(\d+))?/gi;
+  let m;
+  // eslint-disable-next-line no-cond-assign
+  while ((m = re.exec(group)) !== null) {
+    const start = parseInt(m[1], 10);
+    if (m[2] === undefined) {
+      numbers.push(start);
+      continue;
+    }
+    const end = parseInt(m[2], 10);
+    if (end >= start && end - start < MAX_CITATION_RANGE) {
+      for (let n = start; n <= end; n++) numbers.push(n);
+    } else {
+      numbers.push(start, end);
+    }
+  }
+  return numbers;
+}
+
 function extractCitedSourceNumbers(answerText) {
   const cited = new Set();
-  const groupRegex = /\(Source\s+\d+(?:\s*,\s*Source\s+\d+)*\)/gi;
+  const groupRegex = new RegExp(CITATION_GROUP_RE.source, 'gi');
   let groupMatch;
   // eslint-disable-next-line no-cond-assign
   while ((groupMatch = groupRegex.exec(answerText)) !== null) {
-    const numbers = groupMatch[0].match(/\d+/g) || [];
-    for (const n of numbers) cited.add(parseInt(n, 10));
+    for (const n of expandCitationGroup(groupMatch[0])) cited.add(n);
   }
   return cited;
 }
@@ -318,6 +345,10 @@ async function runRetrieval(searchQuery, documentIds, originalQuestion, userId) 
   let t = Date.now();
   const expandedQueries = ENABLE_QUERY_EXPANSION ? await expandQuery(searchQuery) : [];
   traceRaw.expansionMs = Date.now() - t;
+  // traceBuilder's "Query Expansion" stage reads this flag - without it the
+  // trace claimed "Disabled" even while several query variants were being
+  // searched (every other stage's *Enabled flag was already recorded).
+  traceRaw.expansionEnabled = ENABLE_QUERY_EXPANSION;
   traceRaw.expandedQueries = expandedQueries;
   const queries = [searchQuery, ...expandedQueries];
   traceRaw.queryVariantCount = queries.length;
@@ -847,6 +878,7 @@ module.exports = {
   retrieveAndAnswerStream,
   NO_INFO_ANSWER,
   extractCitedSourceNumbers,
+  expandCitationGroup,
   computeTopK,
   BROAD_QUESTION_RE,
   runRetrieval,

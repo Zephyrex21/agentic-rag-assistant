@@ -45,6 +45,66 @@ const cases = [
     answer: 'First point (Source 1). Second point (Source 1, Source 3).',
     expected: [1, 3],
   },
+  // --- Plural / range / alternative-separator shapes models produce anyway.
+  // Real regression: an answer cited "(Sources 1-3)" and "(Sources 3-4)", which
+  // matched nothing - the footer then said "2 sources used" for an answer that
+  // drew on all 4, and no citation badges were rendered for those claims. ---
+  {
+    label: 'Plural range "(Sources 1-3)" expands to every source in the range',
+    answer: 'Covers the unit breakdown (Sources 1-3).',
+    expected: [1, 2, 3],
+  },
+  {
+    label: 'The exact two groups from the real bug report together',
+    answer: 'Units (Sources 1-3). Labs and assessment (Sources 3-4).',
+    expected: [1, 2, 3, 4],
+  },
+  {
+    label: 'Plural comma list "(Sources 1, 2)"',
+    answer: 'Both agree (Sources 1, 2).',
+    expected: [1, 2],
+  },
+  {
+    label: '"and" / "&" separators',
+    answer: 'First (Sources 1 and 2). Second (Sources 3 & 5).',
+    expected: [1, 2, 3, 5],
+  },
+  {
+    label: 'En dash and "to" ranges',
+    answer: 'A (Sources 1\u20133). B (Sources 5 to 6).',
+    expected: [1, 2, 3, 5, 6],
+  },
+  {
+    label: 'Mixed single + range inside one group',
+    answer: 'Wide claim (Source 1, Source 3-5).',
+    expected: [1, 3, 4, 5],
+  },
+  {
+    label: 'Case-insensitive on the word "Sources"',
+    answer: 'Lowercase variant (sources 2-3).',
+    expected: [2, 3],
+  },
+  // --- Things that merely look similar must NOT be read as citations. ---
+  {
+    label: 'Ordinary parentheses mentioning "Source" are not citations',
+    answer: 'The tool is open (Source code is on GitHub). See also (Sources: the annual report) and (Source 2 of the paper).',
+    expected: [],
+  },
+  {
+    label: 'Unclosed or dangling group is not a citation',
+    answer: 'Truncated mid-stream (Sources 1-3 and also (Sources 1-) here.',
+    expected: [],
+  },
+  {
+    label: 'Reversed range is kept as just its two endpoints (never expanded backwards)',
+    answer: 'Odd (Sources 5-3).',
+    expected: [3, 5],
+  },
+  {
+    label: 'Absurdly wide range is NOT expanded into hundreds of numbers (capped)',
+    answer: 'Malformed (Sources 1-999).',
+    expected: [1, 999],
+  },
 ];
 
 console.log('=== Citation Extraction Test ===\n');

@@ -6,17 +6,41 @@ export type AnswerSegment =
 // deliberately distinct from http(s):// so there's no ambiguity with a real link.
 const CITATION_SCHEME = 'citation:';
 
-// Matches a whole citation group - a single "(Source 1)" OR a
-// comma-separated group like "(Source 1, Source 3)", which the generation
-// prompt explicitly asks the model to use when a claim draws on more than
-// one source (see llm.js's rule 3). A single-number-only regex used to miss
-// grouped citations entirely, leaving them as literal unstyled
-// "(Source 1, Source 2)" text instead of badges - this matches the whole
-// group so every number inside it gets converted.
-const CITATION_GROUP_RE = /\(Source\s+\d+(?:\s*,\s*Source\s+\d+)*\)/gi;
+// Matches a whole citation group. Accepts the shapes the generation prompt
+// asks for - a single "(Source 1)" OR a comma-separated "(Source 1, Source 3)"
+// (see llm.js's rule 3) - plus the variants models produce anyway:
+// "(Sources 1, 2)", "(Sources 1 and 2)", and ranges like "(Sources 1-3)"
+// (also with an en/em dash or "to"). A single-number-only regex used to miss
+// grouped citations entirely, and a "Source"-singular-only one still missed
+// "(Sources 1-3)" - both left literal unstyled "(Sources 1-3)" text in the
+// answer instead of badges. This matches the whole group so every number
+// inside it gets converted.
+// NOTE: server/src/services/rag.js keeps its own copy of this pattern (it
+// decides which sources count as "cited") - keep the two in step.
+const CITATION_GROUP_RE = /\(Sources?\s+\d+(?:\s*(?:,|&|and|-|\u2013|\u2014|to)\s*(?:Sources?\s+)?\d+)*\)/gi;
+
+// A range like 1-3 expands to 1,2,3. Capped so a malformed "(Sources 1-999)"
+// can never flood the answer with hundreds of badges.
+const MAX_CITATION_RANGE = 12;
 
 function extractSourceNumbers(citationGroup: string): number[] {
-  return (citationGroup.match(/\d+/g) || []).map((n) => parseInt(n, 10));
+  const numbers: number[] = [];
+  const re = /(\d+)(?:\s*(?:-|\u2013|\u2014|\bto\b)\s*(?:Sources?\s+)?(\d+))?/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(citationGroup)) !== null) {
+    const start = parseInt(m[1], 10);
+    if (m[2] === undefined) {
+      numbers.push(start);
+      continue;
+    }
+    const end = parseInt(m[2], 10);
+    if (end >= start && end - start < MAX_CITATION_RANGE) {
+      for (let n = start; n <= end; n++) numbers.push(n);
+    } else {
+      numbers.push(start, end);
+    }
+  }
+  return numbers;
 }
 
 /**

@@ -77,3 +77,55 @@ describe('AnswerText', () => {
     expect(screen.getByRole('button', { name: /show source 1/i })).toBeInTheDocument();
   });
 });
+
+describe('AnswerText - <br> handling (real bug: tables showed literal "<br>" text)', () => {
+  const tableWithBreaks = [
+    '| Section | Content |',
+    '|---|---|',
+    '| Objectives | \u25AA Understand architecture.<br>\u25AA Gain hands-on experience.<br>\u25AA Study protocols. |',
+    '| Outcomes | 1. State the state-of-the-art.<br>2. Distinguish error techniques. |',
+  ].join('\n');
+
+  it('renders <br> inside table cells as real line breaks, never as literal text', () => {
+    const { container } = render(<AnswerText content={tableWithBreaks} />);
+    expect(container.textContent).not.toContain('<br>');
+    expect(container.textContent).not.toContain('\uE000');
+    const cells = container.querySelectorAll('td');
+    expect(cells[1].querySelectorAll('br')).toHaveLength(2);
+    expect(cells[3].querySelectorAll('br')).toHaveLength(1);
+    expect(cells[1].textContent).toContain('Understand architecture.');
+    expect(cells[1].textContent).toContain('Gain hands-on experience.');
+  });
+
+  it('keeps citation badges working in a cell that also contains a <br>', () => {
+    const sources = [{ sourceNumber: 1, cited: true, documentId: 'd', filename: 'a.pdf', chunkIndex: 0, excerpt: 'x', fullText: 'x', relevanceScore: 0.5 }] as never;
+    const { container } = render(<AnswerText content={'| A | B |\n|---|---|\n| one<br>two (Source 1) | z |'} sources={sources} />);
+    expect(container.querySelectorAll('td')[0].querySelectorAll('br')).toHaveLength(1);
+    expect(container.textContent).not.toContain('<br>');
+    expect(container.textContent).not.toContain('(Source 1)');
+  });
+
+  it('renders <br> in a normal paragraph as a line break', () => {
+    const { container } = render(<AnswerText content={'first line<br>second line'} />);
+    expect(container.querySelectorAll('p br')).toHaveLength(1);
+    expect(container.textContent).not.toContain('<br>');
+  });
+
+  it('leaves <br> inside a fenced code block as literal text', () => {
+    const { container } = render(<AnswerText content={'```html\n<p>one<br>two</p>\n```'} />);
+    expect(container.querySelector('pre')?.textContent).toContain('<br>');
+  });
+
+  it('renders ordinary answers (no <br>) exactly as before - a table still has its structure', () => {
+    const { container } = render(<AnswerText content={'| A | B |\n|---|---|\n| 1 | 2 |'} />);
+    expect(container.querySelectorAll('th')).toHaveLength(2);
+    expect(container.querySelectorAll('td')).toHaveLength(2);
+    expect(container.querySelectorAll('br')).toHaveLength(0);
+  });
+
+  it('converts a cached/older answer that already contains <br> and "(Sources 1-3)" - both fixes together', () => {
+    const { container } = render(<AnswerText content={'| A | B |\n|---|---|\n| x<br>y | claim (Sources 1-3) |'} />);
+    expect(container.textContent).not.toContain('<br>');
+    expect(container.textContent).not.toContain('(Sources 1-3)');
+  });
+});

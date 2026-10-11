@@ -3,6 +3,7 @@ import remarkGfm from 'remark-gfm';
 import { isValidElement } from 'react';
 import type { Components } from 'react-markdown';
 import { transformCitationsToLinks, isCitationHref } from '../../lib/citations';
+import { normalizeHtmlBreaks, renderBreaks } from '../../lib/htmlBreaks';
 import { CitationBadge } from './CitationBadge';
 import { MermaidDiagram } from './MermaidDiagram';
 import type { Source } from '../../lib/types';
@@ -30,7 +31,7 @@ export function AnswerText({
   animateCitations?: boolean;
 }) {
   const sourceByNumber = new Map((sources || []).map((s) => [s.sourceNumber, s]));
-  const transformed = transformCitationsToLinks(content);
+  const transformed = transformCitationsToLinks(normalizeHtmlBreaks(content));
 
   const components: Components = {
     // Citation links get intercepted here; a genuine external link (unlikely
@@ -49,12 +50,12 @@ export function AnswerText({
     h1: ({ children }) => <h3 className="mb-2 mt-4 font-serif text-xl text-ink first:mt-0">{children}</h3>,
     h2: ({ children }) => <h4 className="mb-2 mt-4 font-serif text-lg text-ink first:mt-0">{children}</h4>,
     h3: ({ children }) => <h5 className="mb-1.5 mt-3 text-[15px] font-semibold text-ink first:mt-0">{children}</h5>,
-    p: ({ children }) => <p className="mb-3 text-[15px] leading-relaxed text-ink last:mb-0">{children}</p>,
+    p: ({ children }) => <p className="mb-3 text-[15px] leading-relaxed text-ink last:mb-0">{renderBreaks(children)}</p>,
     strong: ({ children }) => <strong className="font-semibold text-ink">{children}</strong>,
     em: ({ children }) => <em className="italic">{children}</em>,
     ul: ({ children }) => <ul className="mb-3 ml-1 list-disc space-y-1 pl-4 text-[15px] text-ink last:mb-0">{children}</ul>,
     ol: ({ children }) => <ol className="mb-3 ml-1 list-decimal space-y-1 pl-4 text-[15px] text-ink last:mb-0">{children}</ol>,
-    li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+    li: ({ children }) => <li className="leading-relaxed">{renderBreaks(children)}</li>,
     code: ({ className, children }) => {
       // Fenced ```mermaid blocks get rendered as an actual diagram instead
       // of a plain code block - inline code (no className) and every other
@@ -89,8 +90,8 @@ export function AnswerText({
         <table className="w-full border-collapse text-sm">{children}</table>
       </div>
     ),
-    th: ({ children }) => <th className="border-b border-border px-2 py-1.5 text-left font-semibold text-ink">{children}</th>,
-    td: ({ children }) => <td className="border-b border-border px-2 py-1.5 text-ink">{children}</td>,
+    th: ({ children }) => <th className="border-b border-border px-2 py-1.5 text-left font-semibold text-ink">{renderBreaks(children)}</th>,
+    td: ({ children }) => <td className="border-b border-border px-2 py-1.5 text-ink">{renderBreaks(children)}</td>,
   };
 
   return (
