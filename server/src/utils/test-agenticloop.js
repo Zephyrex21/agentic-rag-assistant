@@ -216,6 +216,22 @@ async function main() {
     console.log('✅ runAgenticRetrieval: skipped search entirely -> chunks is [] (not null) - the assistant still replies naturally, doesn\'t hard-fail');
   }
 
+  // --- 9. Regression: planner skipping the search on a CONTENT question must not
+  // silently produce a zero-source answer. This is the real bug where "tell me
+  // about this document" got "I don't have any information about that
+  // document" because the planner mistook it for a meta question. The guard
+  // throws so rag.js falls back to the fixed pipeline (which always searches). ---
+  {
+    for (const q of ['tell me about this document', 'summarize this', 'what is this about?', 'explain the file']) {
+      await assert.rejects(
+        () => runAgenticRetrieval(q, null, [], { maxSteps: 2, callPlannerTurn: async () => stopMsg('No search needed.') }),
+        /skipped searching/,
+        `FAIL: skipping search on "${q}" should be rejected so the fixed pipeline takes over`
+      );
+    }
+    console.log('✅ Planner skipping the search on a content question throws -> falls back to the fixed pipeline instead of answering with zero sources');
+  }
+
   console.log('\n✅ All agentic planner loop tests passed.');
 }
 

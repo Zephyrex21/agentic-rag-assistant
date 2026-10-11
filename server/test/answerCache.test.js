@@ -175,3 +175,40 @@ test('write - never throws even if a dependency does (caching is best-effort, ne
     answerCache.write({ question: 'x', answer: 'y', sources: [], userId: null, documentIds: undefined })
   );
 });
+
+// --- Regression: zero-source answers must never be cached or served ---
+// Real bug: the planner skipped the search for "tell me about this
+// document", producing a zero-source "I don't have any documents" answer.
+// verifyAnswer passes any answer with no sources, so it was written to the
+// cache and then replayed for every later near-identical question - even
+// after the planner itself behaved.
+
+test('write - never caches an answer that has no sources (it was never grounded in the documents)', async (t) => {
+  mockEmbedOne(t);
+  const insertMock = t.mock.method(answerCacheStore, 'insert', async () => 'should-not-happen');
+  const upsertMock = t.mock.method(pinecone, 'upsertVectors', async () => {});
+
+  await answerCache.write({ question: 'tell me about this document', answer: "I don't have any documents to refer to.", sources: [], userId: null, documentIds: ['doc-a'] });
+  await answerCache.write({ question: 'tell me about this document', answer: 'x', sources: undefined, userId: null, documentIds: ['doc-a'] });
+
+  assert.strictEqual(insertMock.mock.callCount(), 0, 'a zero-source answer must not reach the database');
+  assert.strictEqual(upsertMock.mock.callCount(), 0, 'a zero-source answer must not reach Pinecone');
+});
+
+test('lookup - ignores an already-saved zero-source row, so previously poisoned entries heal themselves', async (t) => {
+  mockEmbedOne(t);
+  t.mock.method(pinecone, 'queryVectors', async () => [{ id: 'poisoned-1', score: 1 }]);
+  t.mock.method(answerCacheStore, 'findById', async (id) => ({
+    id,
+    question: 'tell me about this document',
+    answer: "I'm sorry, but I don't have any information about that document.",
+    sources: [],
+    hitCount: 3,
+    createdAt: '2026-10-01T00:00:00Z',
+  }));
+  const hitMock = t.mock.method(answerCacheStore, 'recordHit', async () => {});
+
+  const result = await answerCache.lookup({ question: 'tell me about this document', userId: null, documentIds: ['doc-a'] });
+  assert.strictEqual(result, null, 'must be a miss so the real pipeline runs');
+  assert.strictEqual(hitMock.mock.callCount(), 0, 'a skipped row must not be counted as a hit');
+});

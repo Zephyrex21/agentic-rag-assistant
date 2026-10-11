@@ -99,12 +99,17 @@ async function lookup({ question, userId, documentIds }) {
     if (!best || (best.score ?? 0) < SIMILARITY_THRESHOLD) return null;
 
     const cached = await answerCacheStore.findById(best.id);
+    // Never serve an ungrounded entry. Rows with zero sources were written
+    // by an earlier bug (a skipped search produced a "no info" answer that
+    // passed verification trivially) - ignoring them here heals the cache
+    // without anyone having to purge it by hand.
     // The Pinecone vector and the Postgres row are written together (see
     // write() below) but deleted independently in places (e.g. a document
     // removal only cleans up cache rows scoped to it, not yet its
     // Pinecone siblings in every code path) - a dangling vector with no
     // matching row is treated as a miss, not an error.
     if (!cached) return null;
+    if (!Array.isArray(cached.sources) || cached.sources.length === 0) return null;
     if (!tokensMatch(question, cached.question)) return null;
 
     answerCacheStore.recordHit(cached.id).catch((err) => console.warn(`[answerCache] recordHit failed: ${err.message}`));
@@ -133,6 +138,11 @@ async function lookup({ question, userId, documentIds }) {
  * person is already reading over.
  */
 async function write({ question, answer, sources, userId, documentIds }) {
+  // An answer with no sources was never grounded in the documents (small
+  // talk, or a search that was skipped/found nothing) - caching it would
+  // replay that non-answer for every future near-duplicate question, long
+  // after whatever caused it is fixed.
+  if (!Array.isArray(sources) || sources.length === 0) return;
   try {
     const ownerKey = buildOwnerKey(userId);
     const docSignature = buildDocSignature(documentIds);

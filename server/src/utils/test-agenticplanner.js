@@ -8,7 +8,7 @@
  * the eval harness and manual testing against a real Groq key.
  * Run with: npm run test:agenticplanner
  */
-const { buildPlannerSystemPrompt, parseToolArgs, resolveSearchQuery, MAX_STEPS } = require('../services/agenticRag');
+const { buildPlannerSystemPrompt, parseToolArgs, resolveSearchQuery, looksLikeSmallTalk, MAX_STEPS } = require('../services/agenticRag');
 
 console.log('=== Agentic Planner Test ===\n');
 
@@ -84,3 +84,29 @@ console.assert(withUndefinedArgs.query === 'the original question', 'FAIL: entir
 console.log('✅ A completely missing args object falls back without throwing');
 
 console.log('\n✅ All resolveSearchQuery tests passed.');
+
+// --- looksLikeSmallTalk: the guard that stops the planner from skipping a
+// search on a real question (regression for "tell me about this document"
+// answering "I don't have any information about that document") ---
+for (const q of ['hi', 'Hello!', 'hey there', 'thanks', 'thank you so much', 'ok cool', 'what can you do?', 'hey, what can you do?', 'good morning', 'bye']) {
+  console.assert(looksLikeSmallTalk(q) === true, `FAIL: "${q}" is small talk - skipping a search is fine`);
+}
+for (const q of [
+  'tell me about this document',
+  'summarize this',
+  'what is this about?',
+  'hey, summarize my document',
+  'thanks, but what is the refund policy?',
+  'what can you do with the API key rotation in this doc',
+  'describe LOS PRINCIPIOS DE ORGANIZACION',
+  'great depression summary',
+]) {
+  console.assert(looksLikeSmallTalk(q) === false, `FAIL: "${q}" is a content question - it must be searched`);
+}
+console.log('✅ looksLikeSmallTalk: greetings/thanks/capability questions pass, anything substantive is treated as a content question');
+
+console.assert(
+  /tell me about this document/i.test(prompt3),
+  'FAIL: planner prompt should explicitly call out vague "this document" questions as content questions'
+);
+console.log('✅ Planner prompt explicitly covers vague "this document" questions');
