@@ -3,6 +3,7 @@ const { randomUUID } = require('crypto');
 
 const rag = require('../services/rag');
 const { enforceGuestQueryLimit } = require('../middleware/guestQueryLimit');
+const { describeError } = require('../utils/userFacingError');
 
 const router = express.Router();
 
@@ -97,7 +98,8 @@ router.post('/', enforceGuestQueryLimit, async (req, res) => {
   } catch (err) {
     console.error('[query] stream failed:', err.message);
     if (!clientDisconnected) {
-      writeSseEvent(res, 'error', { message: err.message });
+      const friendly = describeError(err, { code: 'ANSWER_FAILED', message: 'Something went wrong while answering. Please try again.' });
+      writeSseEvent(res, 'error', { message: friendly.message, code: friendly.code });
       res.end();
     }
   }

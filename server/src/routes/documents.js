@@ -9,6 +9,7 @@ const documentStore = require('../db/documentStore');
 const chunkStore = require('../db/chunkStore');
 const { isSupportedFile } = require('../services/textExtraction');
 const { deleteByDocumentId } = require('../services/pinecone');
+const { routeError } = require('../utils/userFacingError');
 const ingestionWorker = require('../workers/ingestionWorker');
 
 const router = express.Router();
@@ -134,7 +135,7 @@ router.post('/upload', (req, res) => {
       res.status(202).json({ documentId, filename: doc.filename, status: doc.status });
     } catch (dbErr) {
       console.error('[documents] upload failed:', dbErr.message);
-      errorResponse(res, 500, 'UPLOAD_FAILED', dbErr.message);
+      errorResponse(res, ...routeError(dbErr, 'UPLOAD_FAILED', "Couldn't upload that file. Please try again."));
     }
   });
 });
@@ -152,7 +153,7 @@ router.get('/:id/status', async (req, res) => {
     });
   } catch (err) {
     console.error('[documents] status check failed:', err.message);
-    errorResponse(res, 500, 'STATUS_CHECK_FAILED', err.message);
+    errorResponse(res, ...routeError(err, 'STATUS_CHECK_FAILED', "Couldn't check that document's status. Please try again."));
   }
 });
 
@@ -200,7 +201,7 @@ router.get('/', async (req, res) => {
     });
   } catch (err) {
     console.error('[documents] list failed:', err.message);
-    errorResponse(res, 500, 'LIST_FAILED', err.message);
+    errorResponse(res, ...routeError(err, 'LIST_FAILED', "Couldn't load your documents. Please try again."));
   }
 });
 
@@ -218,7 +219,7 @@ router.patch('/:id/folder', async (req, res) => {
     res.json({ id: updated.id, folderId: updated.folderId ?? null });
   } catch (err) {
     console.error('[documents] move to folder failed:', err.message);
-    errorResponse(res, 500, 'MOVE_FAILED', err.message);
+    errorResponse(res, ...routeError(err, 'MOVE_FAILED', "Couldn't move that document. Please try again."));
   }
 });
 
@@ -246,7 +247,7 @@ router.delete('/:id', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('[documents] delete failed:', err.message);
-    errorResponse(res, 500, 'DELETE_FAILED', err.message);
+    errorResponse(res, ...routeError(err, 'DELETE_FAILED', "Couldn't delete that document. Please try again."));
   }
 });
 

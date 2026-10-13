@@ -8,6 +8,7 @@ import {
   type OAuthProviders,
 } from '../lib/api';
 import { withRetry } from '../lib/retry';
+import { friendlyErrorMessage } from '../lib/errors';
 
 const NO_OAUTH_PROVIDERS: OAuthProviders = { google: false, github: false };
 
@@ -75,7 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { expiresInSeconds } = await apiRequestOtp(email);
       return { expiresInSeconds };
     } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Could not send a code to that email.');
+      setAuthError(friendlyErrorMessage(err, 'Could not send a code to that email.'));
       throw err;
     }
   }
@@ -94,7 +95,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await apiVerifyOtp(email, code);
       window.location.reload();
     } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'That code didn\'t work.');
+      setAuthError(friendlyErrorMessage(err, 'That code didn\'t work.'));
       throw err;
     }
   }

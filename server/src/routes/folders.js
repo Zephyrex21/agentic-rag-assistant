@@ -1,5 +1,6 @@
 const express = require('express');
 const folderStore = require('../db/folderStore');
+const { routeError } = require('../utils/userFacingError');
 
 const router = express.Router();
 
@@ -19,7 +20,7 @@ router.get('/', async (req, res) => {
     res.json({ folders });
   } catch (err) {
     console.error('[folders] list failed:', err.message);
-    errorResponse(res, 500, 'LIST_FAILED', err.message);
+    errorResponse(res, ...routeError(err, 'LIST_FAILED', "Couldn't load your folders. Please try again."));
   }
 });
 
@@ -38,7 +39,7 @@ router.post('/', async (req, res) => {
     res.status(201).json({ folder });
   } catch (err) {
     console.error('[folders] create failed:', err.message);
-    errorResponse(res, 500, 'CREATE_FAILED', err.message);
+    errorResponse(res, ...routeError(err, 'CREATE_FAILED', "Couldn't create that folder. Please try again."));
   }
 });
 
@@ -51,7 +52,7 @@ router.delete('/:id', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('[folders] delete failed:', err.message);
-    errorResponse(res, 500, 'DELETE_FAILED', err.message);
+    errorResponse(res, ...routeError(err, 'DELETE_FAILED', "Couldn't delete that folder. Please try again."));
   }
 });
 

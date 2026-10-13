@@ -15,6 +15,7 @@ import {
   sendMessageStream,
 } from '../lib/api';
 import { withRetry } from '../lib/retry';
+import { friendlyErrorMessage } from '../lib/errors';
 import { useAuth } from './AuthContext';
 import type { ConversationDetail, ConversationSummary, Message } from '../lib/types';
 
@@ -22,6 +23,8 @@ interface ConversationsContextValue {
   conversations: ConversationSummary[];
   conversationsLoading: boolean;
   loadError: string | null;
+  // Re-runs the initial conversations load after a failure (the "Try again" button).
+  retryLoad: () => void;
   // True once the initial load has been pending long enough that it's
   // probably a Render free-tier cold start (the backend spins down after
   // inactivity and can take up to ~a minute to wake back up), not just a
@@ -96,11 +99,7 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
       if (isInitial) setLoadError(null);
     } catch (err) {
       if (isInitial) {
-        setLoadError(
-          err instanceof Error
-            ? `Couldn't load your conversations: ${err.message}`
-            : "Couldn't load your conversations - is the backend server running?"
-        );
+        setLoadError(friendlyErrorMessage(err, "Couldn't load your conversations. Please try again."));
       }
       // else: Non-fatal - keep whatever list we already have
     } finally {
@@ -112,10 +111,18 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
     refreshList(true);
   }, [refreshList]);
 
-  // Only meaningfully runs once: conversationsLoading starts true for the
-  // initial fetch and is never reset back to true afterward (a message
-  // being sent triggers a refreshList() too, but doesn't re-flip this), so
-  // this effect can only ever arm and fire its timer during that first load.
+  // "Try again" after a failed initial load: clear the error, show the
+  // loading state again, and re-run the same initial load.
+  const retryLoad = useCallback(() => {
+    setLoadError(null);
+    setConversationsLoading(true);
+    void refreshList(true);
+  }, [refreshList]);
+
+  // conversationsLoading starts true for the initial fetch and is only ever
+  // flipped back to true by retryLoad above (a message being sent triggers a
+  // refreshList() too, but doesn't re-flip this), so this effect only arms
+  // its timer during the initial load or an explicit retry of it.
   useEffect(() => {
     if (!conversationsLoading) {
       setIsColdStarting(false);
@@ -273,7 +280,7 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
           },
         });
       } catch (err) {
-        setSendError(err instanceof Error ? err.message : 'Something went wrong sending that.');
+        setSendError(friendlyErrorMessage(err, 'Something went wrong sending that. Please try again.'));
         setSending(false);
         setActiveConversation((prev) =>
           prev
@@ -372,6 +379,7 @@ export function ConversationsProvider({ children }: { children: ReactNode }) {
         conversations,
         conversationsLoading,
         loadError,
+        retryLoad,
         isColdStarting,
         activeConversationId,
         activeConversation,

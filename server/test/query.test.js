@@ -69,7 +69,11 @@ test('POST /api/query - a mid-stream failure is sent as an error event, not a hu
   const events = parseSse(res.text);
   const errorEvent = events.find((e) => e.event === 'error');
   assert.ok(errorEvent, 'expected an error event');
-  assert.match(errorEvent.data.message, /Groq unreachable/);
+  // The raw error is logged server-side; the browser gets a safe message
+  // (see utils/userFacingError.js) - never the provider's own text.
+  assert.doesNotMatch(errorEvent.data.message, /Groq unreachable/);
+  assert.strictEqual(errorEvent.data.code, 'ANSWER_FAILED');
+  assert.match(errorEvent.data.message, /Something went wrong while answering/);
 });
 
 test('POST /api/query - surfaces the "not enough info" case correctly', async (t) => {

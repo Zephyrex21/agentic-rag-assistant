@@ -19,6 +19,7 @@ import {
   uploadDocument,
 } from '../lib/api';
 import { withRetry } from '../lib/retry';
+import { friendlyErrorMessage } from '../lib/errors';
 import type { DocumentSummary, Folder } from '../lib/types';
 
 const POLL_INTERVAL_MS = 2000;
@@ -27,6 +28,8 @@ interface DocumentsContextValue {
   documents: DocumentSummary[];
   loading: boolean;
   loadError: string | null;
+  // Re-runs the initial documents load after a failure (the "Try again" button).
+  retryLoad: () => void;
   uploadError: string | null;
   upload: (file: File, folderId?: string | null) => Promise<void>;
   remove: (documentId: string) => Promise<void>;
@@ -52,7 +55,11 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
   const foldersRef = useRef(folders);
   foldersRef.current = folders;
 
-  useEffect(() => {
+  // The initial documents load, pulled out of the mount effect below so the
+  // "Try again" button can re-run exactly the same thing.
+  const loadDocuments = useCallback(() => {
+    setLoading(true);
+    setLoadError(null);
     // One retry after a short delay - smooths over the local-dev startup
     // race where the client's first request can land before the backend
     // has finished binding to its port (see lib/retry.ts). A genuine
@@ -62,13 +69,13 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
     withRetry(listDocuments)
       .then(({ documents }) => setDocuments(documents))
       .catch((err) => {
-        setLoadError(
-          err instanceof Error
-            ? `Couldn't load your documents: ${err.message}`
-            : "Couldn't load your documents - is the backend server running?"
-        );
+        setLoadError(friendlyErrorMessage(err, "Couldn't load your documents. Please try again."));
       })
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    loadDocuments();
 
     // Folders are an optional layer - if the migration hasn't been run yet
     // on someone's Supabase project, this 404s/errors and we just show no
@@ -82,7 +89,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
     return () => {
       timers.forEach((t) => clearInterval(t));
     };
-  }, []);
+  }, [loadDocuments]);
 
   const pollStatus = useCallback((documentId: string) => {
     if (pollTimers.current.has(documentId)) return;
@@ -145,7 +152,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
           }
           return;
         }
-        setUploadError(err instanceof Error ? err.message : 'Upload failed.');
+        setUploadError(friendlyErrorMessage(err, 'Upload failed. Please try again.'));
       }
     },
     [pollStatus]
@@ -202,6 +209,7 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
         documents,
         loading,
         loadError,
+        retryLoad: loadDocuments,
         uploadError,
         upload,
         remove,

@@ -7,6 +7,10 @@ import type {
   PipelineTrace,
   Source,
 } from './types';
+import { friendlyServerMessage, UNREACHABLE_MESSAGE } from './errors';
+
+// Shown when a streamed answer fails in a way we can't classify.
+const STREAM_ERROR_FALLBACK = 'Something went wrong while answering. Please try again.';
 
 /**
  * Empty by default - every call below becomes a plain relative `/api/...`
@@ -531,7 +535,7 @@ async function consumeSseStream(res: Response, callbacks: StreamCallbacks) {
           else if (eventName === 'done') callbacks.onDone?.(data);
           else if (eventName === 'verified') callbacks.onVerified?.(data);
           else if (eventName === 'revision_available') callbacks.onRevisionAvailable?.(data);
-          else if (eventName === 'error') callbacks.onError?.(data.message);
+          else if (eventName === 'error') callbacks.onError?.(friendlyServerMessage(data.message, STREAM_ERROR_FALLBACK));
         } catch {
           // malformed event - skip it rather than breaking the whole stream
         }
@@ -552,7 +556,7 @@ async function postStream(url: string, body: object, callbacks: StreamCallbacks)
       body: JSON.stringify(body),
     });
   } catch {
-    callbacks.onError?.('Could not reach the server. Is it running?');
+    callbacks.onError?.(UNREACHABLE_MESSAGE);
     return;
   }
 
@@ -562,7 +566,9 @@ async function postStream(url: string, body: object, callbacks: StreamCallbacks)
     if (res.status === 401) notifyAccessRequired();
     const errBody = await res.json().catch(() => null);
     if (errBody?.error?.code === 'GUEST_LIMIT_REACHED') notifyGuestLimitReached();
-    callbacks.onError?.(errBody?.error?.message || `Request failed with status ${res.status}`);
+    callbacks.onError?.(
+      friendlyServerMessage(errBody?.error?.message || `Request failed with status ${res.status}`, STREAM_ERROR_FALLBACK, res.status)
+    );
     return;
   }
 

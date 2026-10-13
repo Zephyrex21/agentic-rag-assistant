@@ -19,6 +19,7 @@ const { requireAppAccessKey } = require('./middleware/auth');
 const { attachUser } = require('./middleware/userAuth');
 const { attachGuestId } = require('./middleware/guestQueryLimit');
 const { generalLimiter, expensiveLimiter } = require('./middleware/rateLimit');
+const { describeError } = require('./utils/userFacingError');
 
 // Uploads still land on local disk temporarily during processing (deleted after
 // ingestion completes). Document/conversation metadata now lives in Supabase
@@ -212,7 +213,11 @@ app.use((err, req, res, next) => {
     message: err.message,
     stack: err.stack,
   });
-  res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message || 'Something went wrong.' } });
+  // The full error is logged above; the browser only gets a safe message.
+  // allowExposed: errors the framework itself marks safe to show (e.g. a
+  // malformed-JSON request body) keep their own message and 4xx status.
+  const friendly = describeError(err, { allowExposed: true });
+  res.status(friendly.status).json({ error: { code: friendly.code, message: friendly.message } });
 });
 
 // 404 handler

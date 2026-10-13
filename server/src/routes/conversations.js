@@ -3,6 +3,7 @@ const express = require('express');
 const conversationStore = require('../db/conversationStore');
 const rag = require('../services/rag');
 const { parseIntEnv } = require('../utils/envConfig');
+const { routeError, describeError } = require('../utils/userFacingError');
 const { enforceGuestQueryLimit } = require('../middleware/guestQueryLimit');
 
 const router = express.Router();
@@ -34,7 +35,7 @@ router.post('/', async (req, res) => {
     res.status(201).json({ conversationId: conversation.id, title: conversation.title });
   } catch (err) {
     console.error('[conversations] create failed:', err.message);
-    errorResponse(res, 500, 'CREATE_FAILED', err.message);
+    errorResponse(res, ...routeError(err, 'CREATE_FAILED', "Couldn't start a new conversation. Please try again."));
   }
 });
 
@@ -66,7 +67,7 @@ router.get('/', async (req, res) => {
     });
   } catch (err) {
     console.error('[conversations] list failed:', err.message);
-    errorResponse(res, 500, 'LIST_FAILED', err.message);
+    errorResponse(res, ...routeError(err, 'LIST_FAILED', "Couldn't load your conversations. Please try again."));
   }
 });
 
@@ -78,7 +79,7 @@ router.get('/:id', async (req, res) => {
     res.json(conversation);
   } catch (err) {
     console.error('[conversations] get failed:', err.message);
-    errorResponse(res, 500, 'GET_FAILED', err.message);
+    errorResponse(res, ...routeError(err, 'GET_FAILED', "Couldn't open that conversation. Please try again."));
   }
 });
 
@@ -104,7 +105,7 @@ router.post('/:id/messages', enforceGuestQueryLimit, async (req, res) => {
     conversation = await conversationStore.getConversation(conversationId, { userId });
   } catch (err) {
     console.error('[conversations] lookup failed:', err.message);
-    return errorResponse(res, 500, 'MESSAGE_FAILED', err.message);
+    return errorResponse(res, ...routeError(err, 'MESSAGE_FAILED', "Couldn't send that message. Please try again."));
   }
   if (!conversation) return errorResponse(res, 404, 'CONVERSATION_NOT_FOUND', 'No conversation with that ID.');
 
@@ -215,7 +216,8 @@ router.post('/:id/messages', enforceGuestQueryLimit, async (req, res) => {
   } catch (err) {
     console.error('[conversations] message stream failed:', err.message);
     if (!clientDisconnected) {
-      writeSseEvent(res, 'error', { message: err.message });
+      const friendly = describeError(err, { code: 'ANSWER_FAILED', message: 'Something went wrong while answering. Please try again.' });
+      writeSseEvent(res, 'error', { message: friendly.message, code: friendly.code });
       res.end();
     }
   }
@@ -248,7 +250,7 @@ router.patch('/:id/messages/:messageId/revision', async (req, res) => {
     res.json(updated);
   } catch (err) {
     console.error('[conversations] apply revision failed:', err.message);
-    errorResponse(res, 500, 'APPLY_REVISION_FAILED', err.message);
+    errorResponse(res, ...routeError(err, 'APPLY_REVISION_FAILED', "Couldn't apply that revision. Please try again."));
   }
 });
 
@@ -261,7 +263,7 @@ router.delete('/:id', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('[conversations] delete failed:', err.message);
-    errorResponse(res, 500, 'DELETE_FAILED', err.message);
+    errorResponse(res, ...routeError(err, 'DELETE_FAILED', "Couldn't delete that conversation. Please try again."));
   }
 });
 

@@ -13,6 +13,7 @@ export function ConversationsPanel() {
     conversations,
     conversationsLoading,
     loadError,
+    retryLoad,
     activeConversationId,
     selectConversation,
     deleteConversation,
@@ -51,7 +52,12 @@ export function ConversationsPanel() {
     return (
       <div className="flex items-start gap-2 rounded-lg px-2 py-2 text-xs text-highlight" style={{ background: 'color-mix(in srgb, var(--highlight) 8%, transparent)' }}>
         <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-        <span>{loadError}</span>
+        <div className="flex flex-col items-start gap-1">
+          <span>{loadError}</span>
+          <button type="button" onClick={retryLoad} className="font-medium underline underline-offset-2 hover:no-underline">
+            Try again
+          </button>
+        </div>
       </div>
     );
   }

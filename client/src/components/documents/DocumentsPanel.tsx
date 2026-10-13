@@ -24,7 +24,7 @@ const SEARCH_THRESHOLD = 6;
 type FolderFilter = 'all' | 'uncategorized' | string;
 
 export function DocumentsPanel() {
-  const { documents, loading, loadError, uploadError, upload, remove, folders, createFolder, deleteFolder, moveToFolder } =
+  const { documents, loading, loadError, retryLoad, uploadError, upload, remove, folders, createFolder, deleteFolder, moveToFolder } =
     useDocuments();
   const [dragActive, setDragActive] = useState(false);
   const [query, setQuery] = useState('');
@@ -104,7 +104,12 @@ export function DocumentsPanel() {
           style={{ background: 'color-mix(in srgb, var(--highlight) 8%, transparent)' }}
         >
           <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-          <span>{loadError}</span>
+          <div className="flex flex-col items-start gap-1">
+            <span>{loadError}</span>
+            <button type="button" onClick={retryLoad} className="font-medium underline underline-offset-2 hover:no-underline">
+              Try again
+            </button>
+          </div>
         </div>
       )}
 
